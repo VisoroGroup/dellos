@@ -1,0 +1,73 @@
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { AuthProvider, useAuth } from './hooks/useAuth';
+import { ToastProvider } from './hooks/useToast';
+import Layout from './components/layout/Layout';
+import PaymentsPage from './components/payments/PaymentsPage';
+import BudgetPlanningPage from './components/budget/BudgetPlanningPage';
+import ClientInvoicesPage from './components/budget/ClientInvoicesPage';
+import BankImportPage from './components/budget/BankImportPage';
+
+const queryClient = new QueryClient({
+    defaultOptions: { queries: { staleTime: 30_000, retry: 1 } },
+});
+
+function ProtectedRoute({ children }: { children: React.ReactNode }) {
+    const { user, loading } = useAuth();
+    if (loading) return <div className="flex items-center justify-center h-screen bg-navy-950"><div className="w-8 h-8 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" /></div>;
+    if (!user) return <Navigate to="/" replace />;
+    return <>{children}</>;
+}
+
+function AppRoutes() {
+    const { user, loading } = useAuth();
+
+    if (loading) {
+        return <div className="flex items-center justify-center h-screen bg-navy-950"><div className="w-8 h-8 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" /></div>;
+    }
+
+    if (!user) {
+        const serverUrl = import.meta.env.VITE_SERVER_URL || '';
+        return (
+            <div className="flex items-center justify-center h-screen bg-navy-950">
+                <div className="text-center">
+                    <h1 className="text-3xl font-bold text-white mb-2">Financiar</h1>
+                    <p className="text-navy-400 mb-6">Visoro Global SRL</p>
+                    <a
+                        href={`${serverUrl}/api/auth/microsoft`}
+                        className="inline-flex items-center gap-2 px-6 py-3 bg-blue-500 hover:bg-blue-400 text-white rounded-lg font-medium transition-colors"
+                    >
+                        Autentificare cu Microsoft
+                    </a>
+                </div>
+            </div>
+        );
+    }
+
+    return (
+        <Layout>
+            <Routes>
+                <Route path="/" element={<Navigate to="/payments" replace />} />
+                <Route path="/payments" element={<ProtectedRoute><PaymentsPage /></ProtectedRoute>} />
+                <Route path="/budget" element={<ProtectedRoute><BudgetPlanningPage /></ProtectedRoute>} />
+                <Route path="/client-invoices" element={<ProtectedRoute><ClientInvoicesPage /></ProtectedRoute>} />
+                <Route path="/bank-import" element={<ProtectedRoute><BankImportPage /></ProtectedRoute>} />
+                <Route path="*" element={<Navigate to="/payments" replace />} />
+            </Routes>
+        </Layout>
+    );
+}
+
+export default function App() {
+    return (
+        <QueryClientProvider client={queryClient}>
+            <BrowserRouter>
+                <AuthProvider>
+                    <ToastProvider>
+                        <AppRoutes />
+                    </ToastProvider>
+                </AuthProvider>
+            </BrowserRouter>
+        </QueryClientProvider>
+    );
+}

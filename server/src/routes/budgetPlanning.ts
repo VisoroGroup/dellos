@@ -1,0 +1,334 @@
+import { Router, Response } from 'express';
+import pool from '../config/database';
+import { AuthRequest, authMiddleware, requireRole } from '../middleware/auth';
+import { asyncHandler } from '../middleware/errorHandler';
+
+const router = Router();
+
+// Budget planning is superadmin only
+router.use(authMiddleware);
+router.use(requireRole('superadmin'));
+
+// ==========================================
+// CATEGORIES
+// ==========================================
+
+// GET /api/budget/categories — tree structure
+router.get('/categories', asyncHandler(async (_req: AuthRequest, res: Response) => {
+    const { rows } = await pool.query(`
+        SELECT id, name, section, section_label, parent_id, order_index, is_summary_row, is_revenue
+        FROM budget_categories
+        ORDER BY order_index ASC, name ASC
+    `);
+
+    // Build tree: group children under parents
+    const parentMap = new Map<string | null, typeof rows>();
+    for (const row of rows) {
+        const pid = row.parent_id || null;
+        if (!parentMap.has(pid)) parentMap.set(pid, []);
+        parentMap.get(pid)!.push(row);
+    }
+
+    const tree = (parentMap.get(null) || []).map(parent => ({
+        ...parent,
+        children: (parentMap.get(parent.id) || []).sort((a: any, b: any) => a.order_index - b.order_index),
+    }));
+
+    res.json(tree);
+}));
+
+// POST /api/budget/categories — add new category
+router.post('/categories', asyncHandler(async (req: AuthRequest, res: Response) => {
+    const { name, section, section_label, parent_id } = req.body;
+
+    if (!name || !section) {
+        res.status(400).json({ error: 'Név és szekció megadása kötelező.' });
+        return;
+    }
+
+    // Get next order_index for the section/parent
+    const orderQuery = parent_id
+        ? await pool.query('SELECT COALESCE(MAX(order_index), -1) + 1 AS next FROM budget_categories WHERE parent_id = $1', [parent_id])
+        : await pool.query('SELECT COALESCE(MAX(order_index), -1) + 1 AS next FROM budget_categories WHERE parent_id IS NULL');
+    const nextOrder = parseInt(orderQuery.rows[0].next, 10);
+
+    // If parent exists, inherit section info from parent
+    let finalSection = section;
+    let finalSectionLabel = section_label || section;
+    if (parent_id) {
+        const { rows: parentRows } = await pool.query('SELECT section, section_label FROM budget_categories WHERE id = $1', [parent_id]);
+        if (parentRows.length > 0) {
+            finalSection = parentRows[0].section;
+            finalSectionLabel = parentRows[0].section_label;
+        }
+    }
+
+    const { rows } = await pool.query(
+        `INSERT INTO budget_categories (name, section, section_label, parent_id, order_index)
+         VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+        [name.trim(), finalSection, finalSectionLabel, parent_id || null, nextOrder]
+    );
+
+    res.status(201).json(rows[0]);
+}));
+
+// DELETE /api/budget/categories/:id — delete category (cascades entries)
+router.delete('/categories/:id', asyncHandler(async (req: AuthRequest, res: Response) => {
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuidRegex.test(req.params.id)) {
+        res.status(400).json({ error: 'Érvénytelen kategória ID formátum.' });
+        return;
+    }
+
+    const { rows } = await pool.query(
+        'DELETE FROM budget_categories WHERE id = $1 RETURNING *',
+        [req.params.id]
+    );
+
+    if (rows.length === 0) {
+        res.status(404).json({ error: 'Kategória nem található.' });
+        return;
+    }
+
+    res.json({ message: 'Kategória törölve.', deleted: rows[0] });
+}));
+
+// PUT /api/budget/categories/:id — rename category
+router.put('/categories/:id', asyncHandler(async (req: AuthRequest, res: Response) => {
+    const { name } = req.body;
+    if (!name) {
+        res.status(400).json({ error: 'Név megadása kötelező.' });
+        return;
+    }
+
+    const { rows } = await pool.query(
+        'UPDATE budget_categories SET name = $1 WHERE id = $2 RETURNING *',
+        [name.trim(), req.params.id]
+    );
+
+    if (rows.length === 0) {
+        res.status(404).json({ error: 'Kategória nem található.' });
+        return;
+    }
+
+    res.json(rows[0]);
+}));
+
+// ==========================================
+// ENTRIES (cell values)
+// ==========================================
+
+// GET /api/budget/entries?year=2025&month=4 — get a month's data (all weeks)
+// GET /api/budget/entries?year=2025 — get a full year overview
+router.get('/entries', asyncHandler(async (req: AuthRequest, res: Response) => {
+    const year = parseInt(req.query.year as string, 10) || new Date().getFullYear();
+    const month = req.query.month ? parseInt(req.query.month as string, 10) : null;
+
+    let query: string;
+    let params: any[];
+
+    if (month) {
+        // Specific month — return all weeks + month total
+        query = `
+            SELECT e.*, c.name AS category_name, c.section, c.parent_id, c.is_summary_row, c.is_revenue
+            FROM budget_entries e
+            JOIN budget_categories c ON e.category_id = c.id
+            WHERE e.year = $1 AND e.month = $2
+            ORDER BY c.order_index ASC, e.week ASC NULLS LAST
+        `;
+        params = [year, month];
+    } else {
+        // Full year — aggregate by month
+        query = `
+            SELECT
+                e.category_id,
+                e.year,
+                e.month,
+                SUM(e.planned) AS planned,
+                SUM(e.actual) AS actual,
+                e.currency,
+                c.name AS category_name,
+                c.section,
+                c.parent_id,
+                c.is_summary_row,
+                c.is_revenue
+            FROM budget_entries e
+            JOIN budget_categories c ON e.category_id = c.id
+            WHERE e.year = $1
+            GROUP BY e.category_id, e.year, e.month, e.currency, c.name, c.section, c.parent_id, c.is_summary_row, c.is_revenue, c.order_index
+            ORDER BY c.order_index ASC, e.month ASC
+        `;
+        params = [year];
+    }
+
+    const { rows } = await pool.query(query, params);
+    res.json({ year, month, entries: rows });
+}));
+
+// PUT /api/budget/entries — upsert a cell value
+router.put('/entries', asyncHandler(async (req: AuthRequest, res: Response) => {
+    const { category_id, year, month, week, planned, actual, currency, notes } = req.body;
+
+    // Validate required fields
+    if (!category_id || !year || !month) {
+        res.status(400).json({ error: 'category_id, year és month kötelező.' });
+        return;
+    }
+
+    // Validate UUID format
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuidRegex.test(category_id)) {
+        res.status(400).json({ error: 'Érvénytelen category_id formátum.' });
+        return;
+    }
+
+    // Validate month range
+    const m = parseInt(month, 10);
+    if (isNaN(m) || m < 1 || m > 12) {
+        res.status(400).json({ error: 'A hónap 1-12 közötti szám kell legyen.' });
+        return;
+    }
+
+    // Validate week range if provided
+    if (week !== null && week !== undefined) {
+        const w = parseInt(week, 10);
+        if (isNaN(w) || w < 1 || w > 5) {
+            res.status(400).json({ error: 'A hét 1-5 közötti szám kell legyen.' });
+            return;
+        }
+    }
+
+    try {
+        const { rows } = await pool.query(`
+            INSERT INTO budget_entries (category_id, year, month, week, planned, actual, currency, notes, updated_by)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            ON CONFLICT (category_id, year, month, week)
+            DO UPDATE SET
+                planned = COALESCE($5, budget_entries.planned),
+                actual = COALESCE($6, budget_entries.actual),
+                currency = COALESCE($7, budget_entries.currency),
+                notes = COALESCE($8, budget_entries.notes),
+                updated_by = $9,
+                updated_at = NOW()
+            RETURNING *
+        `, [
+            category_id, year, m, week || null,
+            planned ?? 0, actual ?? 0, currency || 'RON', notes || null,
+            req.user!.id,
+        ]);
+
+        res.json(rows[0]);
+    } catch (err: any) {
+        if (err?.code === '23503') {
+            res.status(400).json({ error: 'Kategória nem található.' });
+            return;
+        }
+        throw err;
+    }
+}));
+
+// ==========================================
+// CASH BALANCE
+// ==========================================
+
+// GET /api/budget/cash-balance?year=2025
+router.get('/cash-balance', asyncHandler(async (req: AuthRequest, res: Response) => {
+    const year = parseInt(req.query.year as string, 10) || new Date().getFullYear();
+
+    const { rows } = await pool.query(
+        'SELECT * FROM cash_balance WHERE year = $1 ORDER BY month ASC, week ASC NULLS LAST',
+        [year]
+    );
+
+    res.json(rows);
+}));
+
+// PUT /api/budget/cash-balance — upsert
+router.put('/cash-balance', asyncHandler(async (req: AuthRequest, res: Response) => {
+    const { year, month, week, balance, currency, notes } = req.body;
+
+    if (!year || !month || balance === undefined) {
+        res.status(400).json({ error: 'year, month, balance kötelező.' });
+        return;
+    }
+
+    const { rows } = await pool.query(`
+        INSERT INTO cash_balance (year, month, week, balance, currency, notes, updated_by)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        ON CONFLICT (year, month, week, currency)
+        DO UPDATE SET
+            balance = $4,
+            notes = COALESCE($6, cash_balance.notes),
+            updated_by = $7,
+            updated_at = NOW()
+        RETURNING *
+    `, [year, month, week || null, balance, currency || 'RON', notes || null, req.user!.id]);
+
+    res.json(rows[0]);
+}));
+
+// ==========================================
+// SUMMARY
+// ==========================================
+
+// GET /api/budget/summary?year=2025&month=4 — aggregated overview
+router.get('/summary', asyncHandler(async (req: AuthRequest, res: Response) => {
+    const year = parseInt(req.query.year as string, 10) || new Date().getFullYear();
+    const month = req.query.month ? parseInt(req.query.month as string, 10) : null;
+
+    const entryConditions = ['e.year = $1'];
+    const cashConditions = ['year = $1'];
+    const params: (number)[] = [year];
+
+    if (month) {
+        params.push(month);
+        entryConditions.push(`e.month = $${params.length}`);
+        cashConditions.push(`month = $${params.length}`);
+    }
+
+    const entryWhere = entryConditions.join(' AND ');
+    const cashWhere = cashConditions.join(' AND ');
+
+    // Revenue total
+    const revenueQuery = await pool.query(`
+        SELECT COALESCE(SUM(e.actual), 0) AS total_revenue_actual,
+               COALESCE(SUM(e.planned), 0) AS total_revenue_planned
+        FROM budget_entries e
+        JOIN budget_categories c ON e.category_id = c.id
+        WHERE c.is_revenue = true AND ${entryWhere}
+    `, params);
+
+    // Expense total (non-revenue, non-summary)
+    const expenseQuery = await pool.query(`
+        SELECT COALESCE(SUM(e.actual), 0) AS total_expense_actual,
+               COALESCE(SUM(e.planned), 0) AS total_expense_planned
+        FROM budget_entries e
+        JOIN budget_categories c ON e.category_id = c.id
+        WHERE c.is_revenue = false AND c.is_summary_row = false AND ${entryWhere}
+    `, params);
+
+    // Latest cash balance
+    const cashQuery = await pool.query(`
+        SELECT balance FROM cash_balance
+        WHERE ${cashWhere}
+        ORDER BY month DESC, week DESC NULLS LAST
+        LIMIT 1
+    `, params);
+
+    const revenue = revenueQuery.rows[0];
+    const expense = expenseQuery.rows[0];
+
+    res.json({
+        year,
+        month,
+        revenue_planned: parseFloat(revenue.total_revenue_planned),
+        revenue_actual: parseFloat(revenue.total_revenue_actual),
+        expense_planned: parseFloat(expense.total_expense_planned),
+        expense_actual: parseFloat(expense.total_expense_actual),
+        result_planned: parseFloat(revenue.total_revenue_planned) - parseFloat(expense.total_expense_planned),
+        result_actual: parseFloat(revenue.total_revenue_actual) - parseFloat(expense.total_expense_actual),
+        cash_balance: cashQuery.rows[0]?.balance ? parseFloat(cashQuery.rows[0].balance) : null,
+    });
+}));
+
+export default router;

@@ -1,0 +1,211 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+
+@import "tailwindcss";
+
+@theme {
+  --color-navy-50: #f0f4f8;
+  --color-navy-100: #d9e2ec;
+  --color-navy-200: #bcccdc;
+  --color-navy-300: #9fb3c8;
+  --color-navy-400: #829ab1;
+  --color-navy-500: #627d98;
+  --color-navy-600: #486581;
+  --color-navy-700: #334e68;
+  --color-navy-800: #243b53;
+  --color-navy-900: #1E3A5F;
+  --color-navy-950: #102a43;
+}
+
+:root {
+  --chart-tooltip-bg: #1E3A5F;
+  --chart-tooltip-color: #ffffff;
+  --chart-tooltip-radius: 8px;
+  --chart-grid-stroke: #334e68;
+  --kanban-drag-default: rgba(100,116,139,0.15);
+  --kanban-drag-progress: rgba(37,99,235,0.15);
+  --kanban-drag-blocked: rgba(220,38,38,0.15);
+  --kanban-drag-done: rgba(22,163,74,0.15);
+}
+
+@layer base {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: #486581 transparent;
+  }
+}
+
+html, body {
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+/* Prevent any child from exceeding viewport width on mobile */
+#root {
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+body {
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  -webkit-text-size-adjust: 100%;
+  overscroll-behavior-y: none;
+}
+
+/* ==========================================
+   MOBILE COMPATIBILITY (iOS + Android)
+   ========================================== */
+
+/* Prevent iOS Safari auto-zoom on input focus (requires >=16px) */
+@media (max-width: 767px) {
+  input, textarea, select {
+    font-size: 16px !important;
+  }
+}
+
+/* Minimum touch targets on coarse-pointer devices (Apple HIG: 44px)
+   Only apply to primary navigation and standalone action buttons,
+   NOT to compact inline elements like chips, badges, or icon-only buttons */
+@media (pointer: coarse) {
+  /* Primary nav links and main CTA buttons */
+  nav > a, nav > button,
+  .touch-target-lg {
+    min-height: 44px;
+    min-width: 44px;
+  }
+  /* Compact interactive elements get 36px minimum */
+  .touch-target-sm {
+    min-height: 36px;
+    min-width: 36px;
+  }
+}
+
+/* Use dynamic viewport height for correct mobile browser chrome sizing */
+html {
+  min-height: 100dvh;
+}
+
+/* iOS smooth momentum scrolling on older versions */
+.overflow-y-auto, .overflow-x-auto, .overflow-auto {
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Tap highlight on Android */
+a, button {
+  -webkit-tap-highlight-color: rgba(59, 130, 246, 0.15);
+}
+
+/* Hide scrollbar on mobile */
+@media (max-width: 767px) {
+  ::-webkit-scrollbar {
+    display: none;
+  }
+  * {
+    scrollbar-width: none;
+  }
+}
+
+/* Safe area padding utilities */
+.safe-area-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+.safe-area-top {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+/* ==========================================
+   CUSTOM ANIMATIONS
+   ========================================== */
+
+@keyframes slideIn {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes slideUp {
+  from {
+    transform: translateY(20px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes pulse-glow {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(30, 58, 95, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 0 8px rgba(30, 58, 95, 0);
+  }
+}
+
+.animate-slide-in {
+  animation: slideIn 0.3s ease-out;
+}
+
+.animate-slide-up {
+  animation: slideUp 0.3s ease-out;
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.2s ease-out;
+}
+
+.animate-pulse-glow {
+  animation: pulse-glow 2s infinite;
+}
+
+/* Toast animation */
+@keyframes toast-in {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes toast-out {
+  from {
+    transform: translateX(0);
+    opacity: 1;
+  }
+  to {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+}
+
+.toast-enter {
+  animation: toast-in 0.3s ease-out;
+}
+
+.toast-exit {
+  animation: toast-out 0.3s ease-in;
+}
+
+/* Drag and drop */
+.dragging {
+  opacity: 0.5;
+}
