@@ -79,15 +79,15 @@ export interface PaymentActivityLogEntry {
     created_at: string;
 }
 
-export const PAYMENT_CATEGORIES: Record<PaymentCategory, string> = {
-    stat: 'Stat',
-    partener_furnizor: 'Partener / Furnizor',
-    furnizor_servicii: 'Furnizor Servicii',
-    furnizor_echipamente: 'Furnizor Echipamente',
-    marketing: 'Marketing',
-    salarii: 'Salarii',
-    incasare_client: 'Incasare Client',
-    alte_venituri: 'Alte Venituri',
+export const PAYMENT_CATEGORIES: Record<PaymentCategory, { label: string; color: string }> = {
+    stat: { label: 'Stat (ANAF, taxe, impozite)', color: '#DC2626' },
+    partener_furnizor: { label: 'Partener / Furnizor', color: '#2563EB' },
+    furnizor_servicii: { label: 'Furnizor de servicii', color: '#7C3AED' },
+    furnizor_echipamente: { label: 'Furnizor de echipamente', color: '#0891B2' },
+    marketing: { label: 'Marketing / Publicitate', color: '#EA580C' },
+    salarii: { label: 'Salarii / Personal', color: '#16A34A' },
+    incasare_client: { label: 'Încasare client', color: '#059669' },
+    alte_venituri: { label: 'Alte venituri', color: '#0D9488' },
 };
 
 export const PAYMENT_STATUSES: Record<PaymentStatus, { label: string; color: string; bg: string; border: string }> = {
