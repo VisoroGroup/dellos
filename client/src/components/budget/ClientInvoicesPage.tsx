@@ -1,12 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useClientInvoices, useInvoiceSummary, useCreateInvoice, useMarkInvoicePaid, useMarkInvoiceUnpaid, useDeleteInvoice, ClientInvoice } from '../../services/clientInvoices';
 import { useAuth } from '../../hooks/useAuth';
 import { Navigate } from 'react-router-dom';
 import { format } from 'date-fns';
 import { ro } from 'date-fns/locale';
 import { Plus, FileText, Check, X, Trash2, Search, DollarSign, Clock, CheckCircle2, AlertTriangle } from 'lucide-react';
-import { safeLocalStorage } from '../../utils/storage';
 import { useToast } from '../../hooks/useToast';
+import { useTheme } from '../../contexts/ThemeContext';
 
 function formatMoney(val: number, currency = 'RON') {
     return new Intl.NumberFormat('ro-RO', { style: 'currency', currency, minimumFractionDigits: 0 }).format(val);
@@ -15,16 +15,7 @@ function formatMoney(val: number, currency = 'RON') {
 export default function ClientInvoicesPage() {
     const { user } = useAuth();
     const { showToast } = useToast();
-    const [darkMode, setDarkMode] = useState(() => {
-        const saved = safeLocalStorage.get('dark-mode');
-        return saved === null ? true : saved === 'true';
-    });
-    useEffect(() => {
-        let mounted = true;
-        const observer = new MutationObserver(() => { if (mounted) setDarkMode(document.documentElement.classList.contains('dark')); });
-        observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
-        return () => { mounted = false; observer.disconnect(); };
-    }, []);
+    const { darkMode } = useTheme();
 
     const [search, setSearch] = useState('');
     const [filter, setFilter] = useState<'all' | 'paid' | 'unpaid'>('all');

@@ -42,7 +42,7 @@ router.post('/categories', asyncHandler(async (req: AuthRequest, res: Response) 
     const { name, section, section_label, parent_id } = req.body;
 
     if (!name || !section) {
-        res.status(400).json({ error: 'Név és szekció megadása kötelező.' });
+        res.status(400).json({ error: 'Numele și secțiunea sunt obligatorii.' });
         return;
     }
 
@@ -76,7 +76,7 @@ router.post('/categories', asyncHandler(async (req: AuthRequest, res: Response) 
 router.delete('/categories/:id', asyncHandler(async (req: AuthRequest, res: Response) => {
     const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     if (!uuidRegex.test(req.params.id)) {
-        res.status(400).json({ error: 'Érvénytelen kategória ID formátum.' });
+        res.status(400).json({ error: 'Format ID categorie invalid.' });
         return;
     }
 
@@ -86,18 +86,18 @@ router.delete('/categories/:id', asyncHandler(async (req: AuthRequest, res: Resp
     );
 
     if (rows.length === 0) {
-        res.status(404).json({ error: 'Kategória nem található.' });
+        res.status(404).json({ error: 'Categoria nu a fost găsită.' });
         return;
     }
 
-    res.json({ message: 'Kategória törölve.', deleted: rows[0] });
+    res.json({ message: 'Categoria ștearsă.', deleted: rows[0] });
 }));
 
 // PUT /api/budget/categories/:id — rename category
 router.put('/categories/:id', asyncHandler(async (req: AuthRequest, res: Response) => {
     const { name } = req.body;
     if (!name) {
-        res.status(400).json({ error: 'Név megadása kötelező.' });
+        res.status(400).json({ error: 'Numele este obligatoriu.' });
         return;
     }
 
@@ -107,7 +107,7 @@ router.put('/categories/:id', asyncHandler(async (req: AuthRequest, res: Respons
     );
 
     if (rows.length === 0) {
-        res.status(404).json({ error: 'Kategória nem található.' });
+        res.status(404).json({ error: 'Categoria nu a fost găsită.' });
         return;
     }
 
@@ -170,21 +170,21 @@ router.put('/entries', asyncHandler(async (req: AuthRequest, res: Response) => {
 
     // Validate required fields
     if (!category_id || !year || !month) {
-        res.status(400).json({ error: 'category_id, year és month kötelező.' });
+        res.status(400).json({ error: 'category_id, year și month sunt obligatorii.' });
         return;
     }
 
     // Validate UUID format
     const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     if (!uuidRegex.test(category_id)) {
-        res.status(400).json({ error: 'Érvénytelen category_id formátum.' });
+        res.status(400).json({ error: 'Format category_id invalid.' });
         return;
     }
 
     // Validate month range
     const m = parseInt(month, 10);
     if (isNaN(m) || m < 1 || m > 12) {
-        res.status(400).json({ error: 'A hónap 1-12 közötti szám kell legyen.' });
+        res.status(400).json({ error: 'Luna trebuie să fie un număr între 1-12.' });
         return;
     }
 
@@ -192,7 +192,7 @@ router.put('/entries', asyncHandler(async (req: AuthRequest, res: Response) => {
     if (week !== null && week !== undefined) {
         const w = parseInt(week, 10);
         if (isNaN(w) || w < 1 || w > 5) {
-            res.status(400).json({ error: 'A hét 1-5 közötti szám kell legyen.' });
+            res.status(400).json({ error: 'Săptămâna trebuie să fie un număr între 1-5.' });
             return;
         }
     }
@@ -244,7 +244,7 @@ router.put('/entries', asyncHandler(async (req: AuthRequest, res: Response) => {
     } catch (err: any) {
         await client.query('ROLLBACK');
         if (err?.code === '23503') {
-            res.status(400).json({ error: 'Kategória nem található.' });
+            res.status(400).json({ error: 'Categoria nu a fost găsită.' });
             return;
         }
         throw err;
@@ -274,7 +274,7 @@ router.put('/cash-balance', asyncHandler(async (req: AuthRequest, res: Response)
     const { year, month, week, balance, currency, notes } = req.body;
 
     if (!year || !month || balance === undefined) {
-        res.status(400).json({ error: 'year, month, balance kötelező.' });
+        res.status(400).json({ error: 'year, month, balance sunt obligatorii.' });
         return;
     }
 

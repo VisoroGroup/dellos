@@ -4,7 +4,7 @@
  * Configurable column mapping for different bank formats.
  * Parses uploaded Excel files into structured transaction rows.
  */
-import XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
 
 export interface ParsedTransaction {
     rowIndex: number;
@@ -75,9 +75,10 @@ function parseDate(val: any): Date | null {
     if (!val) return null;
     if (val instanceof Date) return val;
     if (typeof val === 'number') {
-        // Excel serial date
-        const d = XLSX.SSF.parse_date_code(val);
-        if (d) return new Date(d.y, d.m - 1, d.d);
+        // Excel serial date — days since 1899-12-30 (Excel epoch, accounting for the 1900 leap-year bug)
+        const ms = Math.round((val - 25569) * 86400 * 1000);
+        const d = new Date(ms);
+        if (!isNaN(d.getTime())) return d;
     }
     if (typeof val === 'string') {
         // Try various formats
@@ -113,24 +114,51 @@ function parseAmount(val: any): number | null {
     return null;
 }
 
-export function parseExcelBuffer(buffer: Buffer, customMapping?: Partial<ColumnMapping>): {
+export async function parseExcelBuffer(buffer: Buffer, customMapping?: Partial<ColumnMapping>): Promise<{
     transactions: ParsedTransaction[];
     detectedColumns: Record<string, string>;
     sheetName: string;
     totalRows: number;
     parsedRows: number;
     errors: string[];
-} {
+}> {
     const errors: string[] = [];
-    const wb = XLSX.read(buffer, { type: 'buffer', cellDates: true });
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(buffer as any);
 
-    if (wb.SheetNames.length === 0) {
+    if (wb.worksheets.length === 0) {
         return { transactions: [], detectedColumns: {}, sheetName: '', totalRows: 0, parsedRows: 0, errors: ['Excel fájl üres.'] };
     }
 
-    const sheetName = wb.SheetNames[0];
-    const ws = wb.Sheets[sheetName];
-    const data: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: false });
+    const ws = wb.worksheets[0];
+    const sheetName = ws.name;
+
+    // Build a 2D array (rows × columns) matching what XLSX.utils.sheet_to_json with header:1 produced.
+    // exceljs is 1-indexed; we normalize to 0-indexed dense arrays.
+    const colCount = ws.columnCount;
+    const data: any[][] = [];
+    for (let r = 1; r <= ws.rowCount; r++) {
+        const row = ws.getRow(r);
+        const arr: any[] = [];
+        for (let c = 1; c <= colCount; c++) {
+            const cell = row.getCell(c);
+            let v: any = cell.value;
+            // Unwrap formula results, hyperlinks, rich text
+            if (v && typeof v === 'object' && !(v instanceof Date)) {
+                if ('result' in v) v = (v as any).result;
+                else if ('text' in v) v = (v as any).text;
+                else if ('richText' in v && Array.isArray((v as any).richText)) {
+                    v = (v as any).richText.map((rt: any) => rt.text).join('');
+                } else if ('hyperlink' in v && 'text' in v) {
+                    v = (v as any).text;
+                }
+            }
+            // Match the original raw:false behavior — empty cells become ''
+            if (v === null || v === undefined) v = '';
+            arr.push(v);
+        }
+        data.push(arr);
+    }
 
     if (data.length < 2) {
         return { transactions: [], detectedColumns: {}, sheetName, totalRows: data.length, parsedRows: 0, errors: ['Túl kevés sor az Excel-ben.'] };

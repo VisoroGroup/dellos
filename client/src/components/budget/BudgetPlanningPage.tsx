@@ -14,9 +14,9 @@ import {
 import { useAuth } from '../../hooks/useAuth';
 import { Navigate } from 'react-router-dom';
 import { Plus, Trash2, ChevronDown, ChevronRight, TrendingUp, TrendingDown, Target, Copy, Download, Loader2 } from 'lucide-react';
-import { safeLocalStorage } from '../../utils/storage';
 import BudgetSidePanel from './BudgetSidePanel';
 import { useGridNav, GridNavApi, GridCellRef } from '../../hooks/useGridNav';
+import { useTheme } from '../../contexts/ThemeContext';
 
 const MONTHS = ['Ianuarie', 'Februarie', 'Martie', 'Aprilie', 'Mai', 'Iunie', 'Iulie', 'August', 'Septembrie', 'Octombrie', 'Noiembrie', 'Decembrie'];
 const WEEKS = [1, 2, 3, 4, 5];
@@ -110,7 +110,6 @@ const CellEditor = forwardRef<GridCellRef, CellEditorProps>(function CellEditor(
         <button
             ref={buttonRef}
             onClick={() => setEditing(true)}
-            onFocus={() => setEditing(true)}
             className={`w-full text-right text-xs px-1 py-0.5 rounded hover:bg-blue-500/10 transition-colors cursor-text ${color}`}
         >
             {displayVal === 0 ? '—' : formatMoney(displayVal)}
@@ -247,16 +246,7 @@ function CopyWeekModal({ year, month, onClose, darkMode }: {
 
 export default function BudgetPlanningPage() {
     const { user } = useAuth();
-    const [darkMode, setDarkMode] = useState(() => {
-        const saved = safeLocalStorage.get('dark-mode');
-        return saved === null ? true : saved === 'true';
-    });
-    useEffect(() => {
-        let mounted = true;
-        const observer = new MutationObserver(() => { if (mounted) setDarkMode(document.documentElement.classList.contains('dark')); });
-        observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
-        return () => { mounted = false; observer.disconnect(); };
-    }, []);
+    const { darkMode } = useTheme();
 
     const [year, setYear] = useState(new Date().getFullYear());
     const [month, setMonth] = useState(new Date().getMonth() + 1);

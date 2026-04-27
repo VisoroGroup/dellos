@@ -20,7 +20,14 @@ api.interceptors.response.use(
     (err) => {
         if (err.response?.status === 401 && !err.config?.url?.includes('/auth/login')) {
             safeLocalStorage.remove('financiar_token');
-            window.location.href = '/';
+            // Avoid redirect loops on the login screen itself
+            const currentPath = window.location.pathname;
+            const isOnLoginPath = currentPath === '/' || currentPath === '/login';
+            if (!isOnLoginPath) {
+                // Notify the toast provider via a global event, then redirect
+                window.dispatchEvent(new CustomEvent('app:session-expired'));
+                setTimeout(() => { window.location.href = '/'; }, 1500);
+            }
         }
         return Promise.reject(err);
     }

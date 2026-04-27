@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider, useAuth } from './hooks/useAuth';
 import { ToastProvider } from './hooks/useToast';
+import { ThemeProvider } from './contexts/ThemeContext';
 import Layout from './components/layout/Layout';
 import PaymentsPage from './components/payments/PaymentsPage';
 import BudgetPlanningPage from './components/budget/BudgetPlanningPage';
@@ -67,13 +68,15 @@ function AppRoutes() {
 export default function App() {
     return (
         <QueryClientProvider client={queryClient}>
-            <BrowserRouter>
-                <AuthProvider>
-                    <ToastProvider>
-                        <AppRoutes />
-                    </ToastProvider>
-                </AuthProvider>
-            </BrowserRouter>
+            <ThemeProvider>
+                <BrowserRouter>
+                    <AuthProvider>
+                        <ToastProvider>
+                            <AppRoutes />
+                        </ToastProvider>
+                    </AuthProvider>
+                </BrowserRouter>
+            </ThemeProvider>
         </QueryClientProvider>
     );
 }

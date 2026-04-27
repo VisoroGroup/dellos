@@ -15,15 +15,27 @@ export interface AuthRequest extends Request {
     user?: User;
 }
 
-const DEFAULT_JWT_SECRET = 'visoro-task-manager-jwt-secret-dev-2024';
-const JWT_SECRET = process.env.JWT_SECRET || DEFAULT_JWT_SECRET;
-
-if (process.env.NODE_ENV === 'production' && JWT_SECRET === DEFAULT_JWT_SECRET) {
-    console.error('🚨 CRITICAL: JWT_SECRET is not set in production! Using insecure default.');
-    throw new Error('JWT_SECRET environment variable must be set in production.');
+function loadJwtSecret(): string {
+    const secret = process.env.JWT_SECRET;
+    if (!secret || secret.length < 32) {
+        throw new Error('JWT_SECRET environment variable is required and must be at least 32 characters');
+    }
+    return secret;
 }
-if (!process.env.JWT_SECRET) {
-    console.warn('⚠️  JWT_SECRET not set — using development default. Do NOT use this in production.');
+const JWT_SECRET: string = loadJwtSecret();
+
+// Module-level boot warning for dev bypass — fires once at startup, not per request
+const isDevBypassEnabled =
+    process.env.DEV_AUTH_BYPASS === 'true' &&
+    process.env.NODE_ENV !== 'production' &&
+    !process.env.RAILWAY_ENVIRONMENT;
+
+if (isDevBypassEnabled) {
+    console.warn('==============================================================');
+    console.warn('  WARNING: DEV_AUTH_BYPASS is ENABLED.');
+    console.warn('  All requests are authenticated as the first active user.');
+    console.warn('  This MUST be disabled in production environments.');
+    console.warn('==============================================================');
 }
 
 export function generateToken(user: User): string {
@@ -39,8 +51,8 @@ export async function authMiddleware(
     res: Response,
     next: NextFunction
 ): Promise<void> {
-    // Dev mode bypass — NEVER active in production
-    if (process.env.DEV_AUTH_BYPASS === 'true' && process.env.NODE_ENV !== 'production') {
+    // Dev mode bypass — NEVER active in production or on Railway
+    if (isDevBypassEnabled) {
         try {
             // Check if there's a token in the header
             const authHeader = req.headers.authorization;

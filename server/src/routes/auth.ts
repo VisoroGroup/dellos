@@ -20,12 +20,21 @@ type SqlValue = string | number | boolean | null | string[];
 const AUTH_CODE_TTL_MS = 60_000;
 const authCodeStore = new Map<string, { token: string; expiresAt: number }>();
 
-// Clean up expired codes every 5 minutes
+// OAuth CSRF state store — 5 min TTL, single-use
+const OAUTH_STATE_TTL_MS = 5 * 60_000;
+const oauthStateStore = new Map<string, number>();
+
+// Clean up expired codes/states every 5 minutes
 setInterval(() => {
     const now = Date.now();
     for (const [code, entry] of authCodeStore) {
         if (entry.expiresAt < now) {
             authCodeStore.delete(code);
+        }
+    }
+    for (const [state, expiresAt] of oauthStateStore) {
+        if (expiresAt < now) {
+            oauthStateStore.delete(state);
         }
     }
 }, 5 * 60_000);
@@ -55,9 +64,15 @@ router.get('/microsoft', async (req: Request, res: Response): Promise<void> => {
     try {
         const serverUrl = process.env.SERVER_URL || `https://${req.headers.host}`;
         const redirectUri = `${serverUrl}/api/auth/microsoft/callback`;
+
+        // CSRF: generate state, store with TTL, include in OAuth redirect
+        const state = crypto.randomBytes(32).toString('hex');
+        oauthStateStore.set(state, Date.now() + OAUTH_STATE_TTL_MS);
+
         const authUrl = await getMsalApp().getAuthCodeUrl({
             scopes: ['User.Read'],
             redirectUri,
+            state,
         });
         res.redirect(authUrl);
     } catch (err) {
@@ -70,12 +85,24 @@ router.get('/microsoft', async (req: Request, res: Response): Promise<void> => {
 // GET /api/auth/microsoft/callback — exchange code for token
 router.get('/microsoft/callback', async (req: Request, res: Response): Promise<void> => {
     try {
-        const { code } = req.query;
+        const { code, state } = req.query;
         const clientUrl = process.env.CLIENT_URL || `https://${req.headers.host}`;
         const serverUrl = process.env.SERVER_URL || `https://${req.headers.host}`;
 
         if (!code || typeof code !== 'string') {
             res.redirect(`${clientUrl}/?error=no_code`);
+            return;
+        }
+
+        // CSRF: validate state matches a stored, unexpired value (single-use)
+        if (!state || typeof state !== 'string' || !oauthStateStore.has(state)) {
+            res.redirect(`${clientUrl}/?error=csrf`);
+            return;
+        }
+        const stateExpiresAt = oauthStateStore.get(state)!;
+        oauthStateStore.delete(state);
+        if (stateExpiresAt < Date.now()) {
+            res.redirect(`${clientUrl}/?error=csrf`);
             return;
         }
 
@@ -93,68 +120,76 @@ router.get('/microsoft/callback', async (req: Request, res: Response): Promise<v
         const msUser = await graphResponse.json() as MsGraphUser;
         const email = msUser.mail || msUser.userPrincipalName;
 
-
-
-        // First try to find pre-seeded user by email (only active users!)
-        // If found, link their microsoft_id. Otherwise upsert by microsoft_id.
-        const existing = await pool.query(
-            'SELECT * FROM users WHERE email ILIKE $1 AND is_active = true', [email]
-        );
-
-
-
+        // Atomic upsert: SELECT FOR UPDATE + writes inside a single transaction
+        // so concurrent logins serialize and don't race on microsoft_id.
+        const client = await pool.connect();
         let user;
-        if (existing.rows.length > 0 && existing.rows[0].microsoft_id?.startsWith('pending-')) {
-            // Pre-seeded user — link their Microsoft account
-            // First: clear any conflicting microsoft_id on deactivated users
-            await pool.query(
-                `UPDATE users SET microsoft_id = 'CLEARED-' || microsoft_id
-                 WHERE microsoft_id = $1 AND id != $2`,
-                [msUser.id, existing.rows[0].id]
+        try {
+            await client.query('BEGIN');
+
+            // Lock the row(s) for this email so a concurrent login waits.
+            const existing = await client.query(
+                'SELECT * FROM users WHERE email ILIKE $1 AND is_active = true FOR UPDATE',
+                [email]
             );
-            const { rows } = await pool.query(
-                `UPDATE users SET
-                    microsoft_id = $1,
-                    display_name = COALESCE(NULLIF(display_name, ''), $2),
-                    updated_at = NOW()
-                 WHERE id = $3
-                 RETURNING *`,
-                [msUser.id, msUser.displayName, existing.rows[0].id]
-            );
-            user = rows[0];
-            console.log(`[SSO] Linked pending user ${existing.rows[0].id} to Microsoft ID ${msUser.id}`);
-        } else if (existing.rows.length > 0) {
-            // Active user already linked — update microsoft_id if needed and refresh info
-            // First: clear any conflicting microsoft_id on other users
-            await pool.query(
-                `UPDATE users SET microsoft_id = 'CLEARED-' || microsoft_id
-                 WHERE microsoft_id = $1 AND id != $2`,
-                [msUser.id, existing.rows[0].id]
-            );
-            const { rows } = await pool.query(
-                `UPDATE users SET
-                    microsoft_id = $1,
-                    display_name = $2,
-                    updated_at = NOW()
-                 WHERE id = $3
-                 RETURNING *`,
-                [msUser.id, msUser.displayName, existing.rows[0].id]
-            );
-            user = rows[0];
-        } else {
-            // No active user found by email — upsert by microsoft_id
-            const { rows } = await pool.query(
-                `INSERT INTO users (id, microsoft_id, email, display_name)
-                 VALUES ($1, $2, $3, $4)
-                 ON CONFLICT (microsoft_id) DO UPDATE SET
-                   email = EXCLUDED.email,
-                   display_name = EXCLUDED.display_name,
-                   is_active = true,
-                   updated_at = NOW()
-                 RETURNING *`,
-                [uuidv4(), msUser.id, email, msUser.displayName]
-            );
-            user = rows[0];
+
+            if (existing.rows.length > 0 && existing.rows[0].microsoft_id?.startsWith('pending-')) {
+                // Pre-seeded user — link their Microsoft account
+                await client.query(
+                    `UPDATE users SET microsoft_id = 'CLEARED-' || microsoft_id
+                     WHERE microsoft_id = $1 AND id != $2`,
+                    [msUser.id, existing.rows[0].id]
+                );
+                const { rows } = await client.query(
+                    `UPDATE users SET
+                        microsoft_id = $1,
+                        display_name = COALESCE(NULLIF(display_name, ''), $2),
+                        updated_at = NOW()
+                     WHERE id = $3
+                     RETURNING *`,
+                    [msUser.id, msUser.displayName, existing.rows[0].id]
+                );
+                user = rows[0];
+                console.log(`[SSO] Linked pending user ${existing.rows[0].id} to Microsoft ID ${msUser.id}`);
+            } else if (existing.rows.length > 0) {
+                // Active user already linked — update microsoft_id if needed and refresh info
+                await client.query(
+                    `UPDATE users SET microsoft_id = 'CLEARED-' || microsoft_id
+                     WHERE microsoft_id = $1 AND id != $2`,
+                    [msUser.id, existing.rows[0].id]
+                );
+                const { rows } = await client.query(
+                    `UPDATE users SET
+                        microsoft_id = $1,
+                        display_name = $2,
+                        updated_at = NOW()
+                     WHERE id = $3
+                     RETURNING *`,
+                    [msUser.id, msUser.displayName, existing.rows[0].id]
+                );
+                user = rows[0];
+            } else {
+                // No active user found by email — upsert by microsoft_id
+                const { rows } = await client.query(
+                    `INSERT INTO users (id, microsoft_id, email, display_name)
+                     VALUES ($1, $2, $3, $4)
+                     ON CONFLICT (microsoft_id) DO UPDATE SET
+                       email = EXCLUDED.email,
+                       display_name = EXCLUDED.display_name,
+                       is_active = true,
+                       updated_at = NOW()
+                     RETURNING *`,
+                    [uuidv4(), msUser.id, email, msUser.displayName]
+                );
+                user = rows[0];
+            }
+
+            await client.query('COMMIT');
+        } catch (txErr) {
+            await client.query('ROLLBACK');
+            throw txErr;
+        } finally {
+            client.release();
         }
 
         // Safety check: reject deactivated users

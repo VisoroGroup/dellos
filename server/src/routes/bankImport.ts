@@ -25,7 +25,7 @@ router.post('/upload', upload.single('file'), asyncHandler(async (req: AuthReque
     const { bank_account_name, currency } = req.body;
 
     // Parse the Excel
-    const parseResult = parseExcelBuffer(req.file.buffer);
+    const parseResult = await parseExcelBuffer(req.file.buffer);
 
     if (parseResult.errors.length > 0 && parseResult.transactions.length === 0) {
         res.status(400).json({ error: 'Nem sikerült beolvasni az Excel-t.', details: parseResult.errors });

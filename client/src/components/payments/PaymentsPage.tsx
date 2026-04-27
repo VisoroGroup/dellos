@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useAuth } from '../../hooks/useAuth';
 import { Navigate } from 'react-router-dom';
 import { usePayments } from '../../services/payments';
@@ -9,32 +9,11 @@ import PaymentsList from './PaymentsList';
 import PaymentDrawer from './PaymentDrawer';
 import PaymentForm from './PaymentForm';
 import { Plus } from 'lucide-react';
-import { safeLocalStorage } from '../../utils/storage';
+import { useTheme } from '../../contexts/ThemeContext';
 
 export default function PaymentsPage() {
     const { user } = useAuth();
-    
-    const [darkMode, setDarkMode] = useState(() => {
-        const saved = safeLocalStorage.get('dark-mode');
-        return saved === null ? true : saved === 'true';
-    });
-
-    useEffect(() => {
-        const handleStorage = () => {
-            const saved = safeLocalStorage.get('dark-mode');
-            setDarkMode(saved === null ? true : saved === 'true');
-        };
-        window.addEventListener('storage', handleStorage);
-        // Also observe classlist on html for dynamic changes in same tab
-        const observer = new MutationObserver(() => {
-            setDarkMode(document.documentElement.classList.contains('dark'));
-        });
-        observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
-        return () => {
-            window.removeEventListener('storage', handleStorage);
-            observer.disconnect();
-        };
-    }, []);
+    const { darkMode } = useTheme();
 
     const [filters, setFilters] = useState({});
     const [selectedPaymentId, setSelectedPaymentId] = useState<string | null>(null);

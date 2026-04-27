@@ -1,11 +1,12 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useCallback } from 'react';
 import { useBankImports, useBankImportDetail, useUploadBankStatement, useRunMatching, useApproveRow, useAssignRow, useSkipRow, useApproveAll, useCompleteImport, BankStatementRow } from '../../services/bankImport';
 import { useAuth } from '../../hooks/useAuth';
+import { useTheme } from '../../contexts/ThemeContext';
+import { useToast } from '../../hooks/useToast';
 import { Navigate } from 'react-router-dom';
 import { format } from 'date-fns';
 import { ro } from 'date-fns/locale';
 import { Upload, FileSpreadsheet, Check, X, SkipForward, CheckCheck, ArrowRight, Link2, Plus, Zap, ChevronDown, History } from 'lucide-react';
-import { safeLocalStorage } from '../../utils/storage';
 
 const CATEGORIES = [
     { value: 'stat', label: 'Stat (ANAF, taxe)' },
@@ -24,16 +25,7 @@ function formatMoney(val: number) {
 
 export default function BankImportPage() {
     const { user } = useAuth();
-    const [darkMode, setDarkMode] = useState(() => {
-        const saved = safeLocalStorage.get('dark-mode');
-        return saved === null ? true : saved === 'true';
-    });
-    useEffect(() => {
-        let mounted = true;
-        const observer = new MutationObserver(() => { if (mounted) setDarkMode(document.documentElement.classList.contains('dark')); });
-        observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
-        return () => { mounted = false; observer.disconnect(); };
-    }, []);
+    const { darkMode } = useTheme();
 
     const [selectedImportId, setSelectedImportId] = useState<string | null>(null);
     const [showHistory, setShowHistory] = useState(false);
@@ -127,12 +119,17 @@ function UploadArea({ darkMode, onUpload, onImportCreated }: {
     const [dragOver, setDragOver] = useState(false);
     const [bankName, setBankName] = useState('Raiffeisen');
     const [currency, setCurrency] = useState('RON');
+    const { showToast } = useToast();
 
     const handleFile = useCallback((file: File) => {
         onUpload.mutate({ file, bank_account_name: bankName, currency }, {
             onSuccess: (data) => onImportCreated(data.import_id),
+            onError: (err: any) => {
+                const msg = err?.response?.data?.error || err?.message || 'Eroare necunoscută';
+                showToast(`Eroare: ${msg}`, 'error');
+            },
         });
-    }, [bankName, currency, onUpload, onImportCreated]);
+    }, [bankName, currency, onUpload, onImportCreated, showToast]);
 
     const handleDrop = (e: React.DragEvent) => {
         e.preventDefault();
@@ -211,6 +208,11 @@ function ImportReview({ importId, darkMode, onBack }: { importId: string; darkMo
     const approveAll = useApproveAll();
     const complete = useCompleteImport();
     const [assigningRowId, setAssigningRowId] = useState<string | null>(null);
+    const { showToast } = useToast();
+    const onMutationError = useCallback((err: any) => {
+        const msg = err?.response?.data?.error || err?.message || 'Eroare necunoscută';
+        showToast(`Eroare: ${msg}`, 'error');
+    }, [showToast]);
 
     if (isLoading || !data) return <div className="animate-pulse h-64 rounded-xl bg-gray-200 dark:bg-navy-800" />;
 
@@ -237,7 +239,7 @@ function ImportReview({ importId, darkMode, onBack }: { importId: string; darkMo
                 <div className="flex gap-2 flex-wrap">
                     {imp.status === 'pending' && (
                         <button
-                            onClick={() => runMatch.mutate(importId)}
+                            onClick={() => runMatch.mutate(importId, { onError: onMutationError })}
                             disabled={runMatch.isPending}
                             className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium bg-gradient-to-r from-blue-500 to-cyan-500 text-white hover:from-blue-600 hover:to-cyan-600 disabled:opacity-50"
                         >
@@ -246,7 +248,7 @@ function ImportReview({ importId, darkMode, onBack }: { importId: string; darkMo
                     )}
                     {unapproved.length > 0 && (
                         <button
-                            onClick={() => approveAll.mutate(importId)}
+                            onClick={() => approveAll.mutate(importId, { onError: onMutationError })}
                             disabled={approveAll.isPending}
                             className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium bg-emerald-500 text-white hover:bg-emerald-600 disabled:opacity-50"
                         >
@@ -255,7 +257,7 @@ function ImportReview({ importId, darkMode, onBack }: { importId: string; darkMo
                     )}
                     {imp.status !== 'completed' && unmatched.length === 0 && (
                         <button
-                            onClick={() => complete.mutate(importId)}
+                            onClick={() => complete.mutate(importId, { onError: onMutationError })}
                             disabled={complete.isPending}
                             className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium bg-gradient-to-r from-emerald-500 to-teal-500 text-white"
                         >
@@ -266,7 +268,7 @@ function ImportReview({ importId, darkMode, onBack }: { importId: string; darkMo
             </div>
 
             {/* Stats */}
-            <div className="grid grid-cols-4 gap-2 mb-4">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-4">
                 {[
                     { label: 'Total', val: rows.length, color: 'text-blue-400' },
                     { label: 'Potrivite', val: matched.length, color: 'text-emerald-400' },
@@ -282,29 +284,31 @@ function ImportReview({ importId, darkMode, onBack }: { importId: string; darkMo
 
             {/* Transaction rows */}
             <div className={`rounded-2xl border overflow-hidden ${darkMode ? 'border-navy-700' : 'border-gray-200'}`}>
-                <table className="w-full text-xs">
-                    <thead>
-                        <tr className={`${darkMode ? 'bg-navy-800' : 'bg-gray-50'}`}>
-                            <th className="text-left px-3 py-2.5 font-semibold">Data</th>
-                            <th className="text-left px-3 py-2.5 font-semibold">Descriere / Partener</th>
-                            <th className="text-right px-3 py-2.5 font-semibold">Sumă</th>
-                            <th className="text-left px-3 py-2.5 font-semibold">Potrivire</th>
-                            <th className="text-center px-3 py-2.5 font-semibold w-32">Acțiune</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {rows.map(row => (
-                            <TransactionRow
-                                key={row.id}
-                                row={row}
-                                darkMode={darkMode}
-                                onApprove={() => approveRow.mutate(row.id)}
-                                onSkip={() => skipRow.mutate(row.id)}
-                                onAssign={() => setAssigningRowId(row.id)}
-                            />
-                        ))}
-                    </tbody>
-                </table>
+                <div className="overflow-x-auto">
+                    <table className="w-full text-xs">
+                        <thead>
+                            <tr className={`${darkMode ? 'bg-navy-800' : 'bg-gray-50'}`}>
+                                <th className="text-left px-3 py-2.5 font-semibold">Data</th>
+                                <th className="text-left px-3 py-2.5 font-semibold">Descriere / Partener</th>
+                                <th className="text-right px-3 py-2.5 font-semibold">Sumă</th>
+                                <th className="text-left px-3 py-2.5 font-semibold">Potrivire</th>
+                                <th className="text-center px-3 py-2.5 font-semibold w-32">Acțiune</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {rows.map(row => (
+                                <TransactionRow
+                                    key={row.id}
+                                    row={row}
+                                    darkMode={darkMode}
+                                    onApprove={() => approveRow.mutate(row.id, { onError: onMutationError })}
+                                    onSkip={() => skipRow.mutate(row.id, { onError: onMutationError })}
+                                    onAssign={() => setAssigningRowId(row.id)}
+                                />
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
             </div>
 
             {/* Assign modal */}
@@ -316,6 +320,7 @@ function ImportReview({ importId, darkMode, onBack }: { importId: string; darkMo
                     onAssign={(category, title) => {
                         assignRow.mutate({ rowId: assigningRowId, category, title }, {
                             onSuccess: () => setAssigningRowId(null),
+                            onError: onMutationError,
                         });
                     }}
                 />

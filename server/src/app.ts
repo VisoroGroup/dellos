@@ -1,5 +1,6 @@
 import express from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
 import morgan from 'morgan';
 import path from 'path';
 import fs from 'fs';
@@ -17,10 +18,30 @@ import { startPaymentEmailScheduler } from './cron/paymentScheduler';
 import { startAnafScheduler } from './cron/anafScheduler';
 import pool from './config/database';
 
+function validateEnv() {
+    const required = ['DATABASE_URL', 'JWT_SECRET', 'CLIENT_URL'];
+    const missing = required.filter(k => !process.env[k]);
+    if (missing.length > 0) {
+        console.error('❌ Missing required env vars:', missing.join(', '));
+        process.exit(1);
+    }
+    if (process.env.NODE_ENV === 'production' && process.env.DEV_AUTH_BYPASS === 'true') {
+        console.error('❌ DEV_AUTH_BYPASS=true is FORBIDDEN in production');
+        process.exit(1);
+    }
+}
+
+validateEnv();
+
 const app = express();
 const PORT = process.env.PORT || 3001;
 
 app.set('trust proxy', 1);
+
+// Security headers (must come before other middleware)
+app.use(helmet({
+    contentSecurityPolicy: false, // disable CSP for now — tune later
+}));
 
 // Middleware
 app.use(cors({
@@ -34,7 +55,7 @@ app.use(cors({
         }
         return process.env.CLIENT_URL || 'http://localhost:5173';
     })(),
-    credentials: true
+    credentials: false
 }));
 app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
 app.use(express.json({ limit: '1mb' }));
@@ -88,7 +109,8 @@ const server = app.listen(PORT, async () => {
     try {
         await runMigrations();
     } catch (err: any) {
-        console.error('⚠️ Migration error (non-fatal):', err?.message || err);
+        console.error('❌ MIGRATION FAILED — REFUSING TO START:', err?.message || err);
+        process.exit(1);
     }
 
     startPaymentEmailScheduler();

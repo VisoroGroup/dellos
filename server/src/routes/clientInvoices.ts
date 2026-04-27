@@ -100,7 +100,7 @@ router.post('/', asyncHandler(async (req: AuthRequest, res: Response) => {
     const { client_name, invoice_number, amount, currency, issued_date, due_date, notes } = req.body;
 
     if (!client_name || !amount || !issued_date) {
-        res.status(400).json({ error: 'client_name, amount és issued_date kötelező.' });
+        res.status(400).json({ error: 'client_name, amount și issued_date sunt obligatorii.' });
         return;
     }
 
@@ -137,7 +137,7 @@ router.put('/:id', asyncHandler(async (req: AuthRequest, res: Response) => {
     `, [client_name, invoice_number, amount, currency, issued_date, due_date || null, notes || null, req.params.id]);
 
     if (rows.length === 0) {
-        res.status(404).json({ error: 'Számla nem található.' });
+        res.status(404).json({ error: 'Factura nu a fost găsită.' });
         return;
     }
 
@@ -155,7 +155,7 @@ router.put('/:id/mark-paid', asyncHandler(async (req: AuthRequest, res: Response
     );
 
     if (!invoice) {
-        res.status(404).json({ error: 'Számla nem található.' });
+        res.status(404).json({ error: 'Factura nu a fost găsită.' });
         return;
     }
 
@@ -163,11 +163,11 @@ router.put('/:id/mark-paid', asyncHandler(async (req: AuthRequest, res: Response
     if (paid_amount !== undefined && paid_amount !== null) {
         const pa = Number(paid_amount);
         if (isNaN(pa) || pa < 0) {
-            res.status(400).json({ error: 'A kifizetett összeg nem lehet negatív.' });
+            res.status(400).json({ error: 'Suma plătită nu poate fi negativă.' });
             return;
         }
         if (pa > parseFloat(invoice.amount)) {
-            res.status(400).json({ error: `A kifizetett összeg (${pa}) nem haladhatja meg a számla értékét (${invoice.amount}).` });
+            res.status(400).json({ error: `Suma plătită (${pa}) nu poate depăși valoarea facturii (${invoice.amount}).` });
             return;
         }
     }
@@ -193,7 +193,7 @@ router.put('/:id/mark-unpaid', asyncHandler(async (req: AuthRequest, res: Respon
     `, [req.params.id]);
 
     if (rows.length === 0) {
-        res.status(404).json({ error: 'Számla nem található.' });
+        res.status(404).json({ error: 'Factura nu a fost găsită.' });
         return;
     }
 
@@ -208,11 +208,11 @@ router.delete('/:id', asyncHandler(async (req: AuthRequest, res: Response) => {
     );
 
     if (rows.length === 0) {
-        res.status(404).json({ error: 'Számla nem található.' });
+        res.status(404).json({ error: 'Factura nu a fost găsită.' });
         return;
     }
 
-    res.json({ message: 'Számla törölve.' });
+    res.json({ message: 'Factura ștearsă.' });
 }));
 
 export default router;
