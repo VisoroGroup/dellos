@@ -9,9 +9,12 @@ import paymentsRoutes from './routes/payments';
 import budgetRoutes from './routes/budgetPlanning';
 import clientInvoiceRoutes from './routes/clientInvoices';
 import bankImportRoutes from './routes/bankImport';
+import anafRoutes from './routes/anaf';
+import anafReportsRoutes from './routes/anafReports';
 import { globalLimiter, authLimiter } from './middleware/rateLimiter';
 import { globalErrorHandler } from './middleware/errorHandler';
 import { startPaymentEmailScheduler } from './cron/paymentScheduler';
+import { startAnafScheduler } from './cron/anafScheduler';
 import pool from './config/database';
 
 const app = express();
@@ -46,6 +49,8 @@ app.use('/api/payments', paymentsRoutes);
 app.use('/api/budget', budgetRoutes);
 app.use('/api/client-invoices', clientInvoiceRoutes);
 app.use('/api/bank-import', bankImportRoutes);
+app.use('/api/anaf/reports', anafReportsRoutes);
+app.use('/api/anaf', anafRoutes);
 
 // Health check
 app.get('/api/health', async (_req, res) => {
@@ -87,6 +92,7 @@ const server = app.listen(PORT, async () => {
     }
 
     startPaymentEmailScheduler();
+    void startAnafScheduler();
 });
 
 // Graceful shutdown

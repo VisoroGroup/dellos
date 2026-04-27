@@ -2,7 +2,8 @@ import React, { useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 import {
-    CreditCard, BarChart3, FileText, Upload, LogOut, Menu, X, ChevronLeft
+    CreditCard, BarChart3, FileText, Upload, LogOut, Menu, X, ChevronLeft,
+    Mail, PieChart
 } from 'lucide-react';
 
 const NAV_ITEMS = [
@@ -10,6 +11,8 @@ const NAV_ITEMS = [
     { to: '/budget', icon: BarChart3, label: 'Budget' },
     { to: '/client-invoices', icon: FileText, label: 'Facturi Client' },
     { to: '/bank-import', icon: Upload, label: 'Bank Import' },
+    { to: '/anaf', icon: Mail, label: 'E-Facturi SPV' },
+    { to: '/anaf/rapoarte', icon: PieChart, label: 'Rapoarte ANAF' },
 ];
 
 export default function Layout({ children }: { children: React.ReactNode }) {

@@ -7,6 +7,9 @@ import PaymentsPage from './components/payments/PaymentsPage';
 import BudgetPlanningPage from './components/budget/BudgetPlanningPage';
 import ClientInvoicesPage from './components/budget/ClientInvoicesPage';
 import BankImportPage from './components/budget/BankImportPage';
+import EFacturiPage from './components/anaf/EFacturiPage';
+import EFacturaDetailPage from './components/anaf/EFacturaDetailPage';
+import RapoartePage from './components/anaf/RapoartePage';
 
 const queryClient = new QueryClient({
     defaultOptions: { queries: { staleTime: 30_000, retry: 1 } },
@@ -52,6 +55,9 @@ function AppRoutes() {
                 <Route path="/budget" element={<ProtectedRoute><BudgetPlanningPage /></ProtectedRoute>} />
                 <Route path="/client-invoices" element={<ProtectedRoute><ClientInvoicesPage /></ProtectedRoute>} />
                 <Route path="/bank-import" element={<ProtectedRoute><BankImportPage /></ProtectedRoute>} />
+                <Route path="/anaf" element={<ProtectedRoute><EFacturiPage /></ProtectedRoute>} />
+                <Route path="/anaf/rapoarte" element={<ProtectedRoute><RapoartePage /></ProtectedRoute>} />
+                <Route path="/anaf/:id" element={<ProtectedRoute><EFacturaDetailPage /></ProtectedRoute>} />
                 <Route path="*" element={<Navigate to="/payments" replace />} />
             </Routes>
         </Layout>
