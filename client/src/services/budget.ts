@@ -2,6 +2,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from './api';
 
 // === Types ===
+export type BudgetCategoryKind = 'revenue' | 'deduction' | 'expense' | 'summary';
+
 export interface BudgetCategory {
     id: string;
     name: string;
@@ -9,9 +11,7 @@ export interface BudgetCategory {
     section_label: string;
     parent_id: string | null;
     order_index: number;
-    is_summary_row: boolean;
-    is_revenue: boolean;
-    is_deduction: boolean;
+    kind: BudgetCategoryKind;
     children?: BudgetCategory[];
 }
 
@@ -28,9 +28,7 @@ export interface BudgetEntry {
     category_name?: string;
     section?: string;
     parent_id?: string | null;
-    is_summary_row?: boolean;
-    is_revenue?: boolean;
-    is_deduction?: boolean;
+    kind?: BudgetCategoryKind;
 }
 
 export interface BudgetSummary {
@@ -253,4 +251,34 @@ export function useDeleteOutstanding() {
             qc.invalidateQueries({ queryKey: ['outstanding'] });
         },
     });
+}
+
+export function useCopyWeek() {
+    const qc = useQueryClient();
+    return useMutation({
+        mutationFn: async (params: {
+            source: { year: number; month: number; week: number };
+            target: { year: number; month: number; week: number };
+        }) => {
+            const { data } = await api.post('/budget/copy-week', params);
+            return data as { copied: number };
+        },
+        onSuccess: () => {
+            qc.invalidateQueries({ queryKey: ['budget-entries'] });
+            qc.invalidateQueries({ queryKey: ['budget-summary'] });
+        },
+    });
+}
+
+export async function exportBudget(year: number): Promise<void> {
+    const response = await api.get(`/budget/export?year=${year}`, { responseType: 'blob' });
+    const blob = new Blob([response.data], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `budget-${year}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
 }

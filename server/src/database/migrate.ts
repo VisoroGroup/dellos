@@ -35,8 +35,6 @@ export async function runMigrations() {
 
         console.log(`📋 Found ${files.length} migration files.`);
 
-        let failedCount = 0;
-
         for (const file of files) {
             const { rows } = await client.query(
                 'SELECT id FROM _migrations WHERE name = $1',
@@ -61,8 +59,8 @@ export async function runMigrations() {
 
             console.log(`   📝 ${statements.length} statement(s) to execute`);
 
+            await client.query('BEGIN');
             try {
-                // Run each statement individually (handles ALTER TYPE outside transaction)
                 for (let i = 0; i < statements.length; i++) {
                     const stmt = statements[i];
                     const preview = stmt.substring(0, 80).replace(/\n/g, ' ');
@@ -70,20 +68,18 @@ export async function runMigrations() {
                     await client.query(stmt);
                 }
 
+                await client.query('COMMIT');
                 await client.query('INSERT INTO _migrations (name) VALUES ($1)', [file]);
                 console.log(`✅ Completed: ${file}`);
             } catch (err: any) {
-                failedCount++;
+                await client.query('ROLLBACK');
                 console.error(`❌ Failed: ${file}`, err?.message || err);
-                // Continue with next migration — don't stop the whole process
+                // Stop the runner — refuse to boot with a half-applied schema.
+                throw new Error(`Migration failed: ${file} — ${err?.message || err}`);
             }
         }
 
-        if (failedCount > 0) {
-            console.warn(`⚠️  ${failedCount} migration(s) failed. Check logs above.`);
-        } else {
-            console.log('✅ Migrations up to date.');
-        }
+        console.log('✅ Migrations up to date.');
     } finally {
         client.release();
     }

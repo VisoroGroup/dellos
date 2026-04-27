@@ -19,6 +19,7 @@ interface SidePanelProps {
     year: number;
     month: number;
     darkMode: boolean;
+    layout?: 'horizontal' | 'vertical';
 }
 
 // Generic outstanding card (Creanțe / Datorii / Prestate nefacturate)
@@ -49,6 +50,12 @@ function OutstandingCard({
         emerald: { text: 'text-emerald-400', bg: 'bg-emerald-500/10', border: 'border-emerald-500/30' },
         red:     { text: 'text-red-400',     bg: 'bg-red-500/10',     border: 'border-red-500/30' },
         amber:   { text: 'text-amber-400',   bg: 'bg-amber-500/10',   border: 'border-amber-500/30' },
+    }[color];
+
+    const buttonClasses = {
+        emerald: 'bg-emerald-500 hover:bg-emerald-600',
+        red: 'bg-red-500 hover:bg-red-600',
+        amber: 'bg-amber-500 hover:bg-amber-600',
     }[color];
 
     const handleAdd = () => {
@@ -126,8 +133,7 @@ function OutstandingCard({
                         <button
                             onClick={handleAdd}
                             disabled={!description.trim() || !amount || addItem.isPending}
-                            className={`flex-1 px-3 py-1.5 rounded-lg text-xs font-medium text-white bg-${color}-500 hover:bg-${color}-600 disabled:opacity-50`}
-                            style={{ backgroundColor: color === 'emerald' ? '#10b981' : color === 'red' ? '#ef4444' : '#f59e0b' }}
+                            className={`flex-1 px-3 py-1.5 rounded-lg text-xs font-medium text-white ${buttonClasses} disabled:opacity-50`}
                         >
                             Adaugă
                         </button>
@@ -214,7 +220,7 @@ function CashBalanceCard({ year, month, darkMode }: { year: number; month: numbe
                     <div className="p-1.5 rounded-lg bg-blue-500/10 text-blue-400">
                         <Wallet className="w-4 h-4" />
                     </div>
-                    <span className="text-sm font-semibold">Casă (numerar)</span>
+                    <span className="text-sm font-semibold">Numerar</span>
                 </div>
                 {!editing && (
                     <button
@@ -269,9 +275,12 @@ function CashBalanceCard({ year, month, darkMode }: { year: number; month: numbe
     );
 }
 
-export default function BudgetSidePanel({ year, month, darkMode }: SidePanelProps) {
+export default function BudgetSidePanel({ year, month, darkMode, layout = 'vertical' }: SidePanelProps) {
+    const containerClass = layout === 'vertical'
+        ? 'flex flex-col gap-4'
+        : 'grid grid-cols-1 md:grid-cols-2 gap-4';
     return (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mt-6">
+        <div className={containerClass}>
             <CashBalanceCard year={year} month={month} darkMode={darkMode} />
             <OutstandingCard
                 type="creanta"

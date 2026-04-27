@@ -16,7 +16,7 @@ router.use(requireRole('superadmin'));
 // GET /api/budget/categories — tree structure
 router.get('/categories', asyncHandler(async (_req: AuthRequest, res: Response) => {
     const { rows } = await pool.query(`
-        SELECT id, name, section, section_label, parent_id, order_index, is_summary_row, is_revenue, is_deduction
+        SELECT id, name, section, section_label, parent_id, order_index, kind
         FROM budget_categories
         ORDER BY order_index ASC, name ASC
     `);
@@ -130,7 +130,7 @@ router.get('/entries', asyncHandler(async (req: AuthRequest, res: Response) => {
     if (month) {
         // Specific month — return all weeks + month total
         query = `
-            SELECT e.*, c.name AS category_name, c.section, c.parent_id, c.is_summary_row, c.is_revenue, c.is_deduction
+            SELECT e.*, c.name AS category_name, c.section, c.parent_id, c.kind
             FROM budget_entries e
             JOIN budget_categories c ON e.category_id = c.id
             WHERE e.year = $1 AND e.month = $2
@@ -150,13 +150,11 @@ router.get('/entries', asyncHandler(async (req: AuthRequest, res: Response) => {
                 c.name AS category_name,
                 c.section,
                 c.parent_id,
-                c.is_summary_row,
-                c.is_revenue,
-                c.is_deduction
+                c.kind
             FROM budget_entries e
             JOIN budget_categories c ON e.category_id = c.id
             WHERE e.year = $1
-            GROUP BY e.category_id, e.year, e.month, e.currency, c.name, c.section, c.parent_id, c.is_summary_row, c.is_revenue, c.is_deduction, c.order_index
+            GROUP BY e.category_id, e.year, e.month, e.currency, c.name, c.section, c.parent_id, c.kind, c.order_index
             ORDER BY c.order_index ASC, e.month ASC
         `;
         params = [year];
@@ -199,8 +197,18 @@ router.put('/entries', asyncHandler(async (req: AuthRequest, res: Response) => {
         }
     }
 
+    const client = await pool.connect();
     try {
-        const { rows } = await pool.query(`
+        await client.query('BEGIN');
+
+        const existing = await client.query(
+            `SELECT id, planned, actual FROM budget_entries
+             WHERE category_id = $1 AND year = $2 AND month = $3 AND week IS NOT DISTINCT FROM $4`,
+            [category_id, year, m, week || null]
+        );
+        const prior = existing.rows[0] || null;
+
+        const { rows } = await client.query(`
             INSERT INTO budget_entries (category_id, year, month, week, planned, actual, currency, notes, updated_by)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             ON CONFLICT (category_id, year, month, week)
@@ -218,13 +226,30 @@ router.put('/entries', asyncHandler(async (req: AuthRequest, res: Response) => {
             req.user!.id,
         ]);
 
-        res.json(rows[0]);
+        const saved = rows[0];
+        await client.query(`
+            INSERT INTO budget_entries_history
+                (entry_id, category_id, year, month, week, planned_old, planned_new, actual_old, actual_new, operation, changed_by)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        `, [
+            saved.id, category_id, year, m, week || null,
+            prior ? prior.planned : null, saved.planned,
+            prior ? prior.actual : null, saved.actual,
+            prior ? 'UPDATE' : 'INSERT',
+            req.user!.id,
+        ]);
+
+        await client.query('COMMIT');
+        res.json(saved);
     } catch (err: any) {
+        await client.query('ROLLBACK');
         if (err?.code === '23503') {
             res.status(400).json({ error: 'Kategória nem található.' });
             return;
         }
         throw err;
+    } finally {
+        client.release();
     }
 }));
 
@@ -290,43 +315,43 @@ router.get('/summary', asyncHandler(async (req: AuthRequest, res: Response) => {
     const entryWhere = entryConditions.join(' AND ');
     const cashWhere = cashConditions.join(' AND ');
 
-    // Revenue total (Valoare facturată)
-    const revenueQuery = await pool.query(`
-        SELECT COALESCE(SUM(e.actual), 0) AS total_revenue_actual,
-               COALESCE(SUM(e.planned), 0) AS total_revenue_planned
-        FROM budget_entries e
-        JOIN budget_categories c ON e.category_id = c.id
-        WHERE c.is_revenue = true AND ${entryWhere}
-    `, params);
-
-    // Deductions total (Parteneri + TVA + Rezervă firmă cu sub-categorii)
-    const deductionQuery = await pool.query(`
-        SELECT COALESCE(SUM(e.actual), 0) AS total_deduction_actual,
-               COALESCE(SUM(e.planned), 0) AS total_deduction_planned
-        FROM budget_entries e
-        JOIN budget_categories c ON e.category_id = c.id
-        WHERE c.is_deduction = true AND c.is_summary_row = false AND ${entryWhere}
-    `, params);
-
-    // Expense total (cheltuieli reale: nu venit, nu deducere, nu summary, nu părinte cu copii)
-    const expenseQuery = await pool.query(`
-        SELECT COALESCE(SUM(e.actual), 0) AS total_expense_actual,
-               COALESCE(SUM(e.planned), 0) AS total_expense_planned
-        FROM budget_entries e
-        JOIN budget_categories c ON e.category_id = c.id
-        WHERE c.is_revenue = false
-          AND c.is_deduction = false
-          AND c.is_summary_row = false
-          AND ${entryWhere}
-    `, params);
-
-    // Latest cash balance
-    const cashQuery = await pool.query(`
-        SELECT balance FROM cash_balance
-        WHERE ${cashWhere}
-        ORDER BY month DESC, week DESC NULLS LAST
-        LIMIT 1
-    `, params);
+    const [revenueQuery, deductionQuery, expenseQuery, cashQuery] = await Promise.all([
+        // Revenue total (Valoare facturată)
+        pool.query(`
+            SELECT COALESCE(SUM(e.actual), 0) AS total_revenue_actual,
+                   COALESCE(SUM(e.planned), 0) AS total_revenue_planned
+            FROM budget_entries e
+            JOIN budget_categories c ON e.category_id = c.id
+            WHERE c.kind = 'revenue' AND ${entryWhere}
+        `, params),
+        // Deductions total (Parteneri + TVA + Rezervă firmă cu sub-categorii)
+        pool.query(`
+            SELECT COALESCE(SUM(e.actual), 0) AS total_deduction_actual,
+                   COALESCE(SUM(e.planned), 0) AS total_deduction_planned
+            FROM budget_entries e
+            JOIN budget_categories c ON e.category_id = c.id
+            WHERE c.kind = 'deduction'
+              AND NOT EXISTS (SELECT 1 FROM budget_categories ch WHERE ch.parent_id = c.id)
+              AND ${entryWhere}
+        `, params),
+        // Expense total (cheltuieli reale: doar kind='expense', fără părinte care are copii)
+        pool.query(`
+            SELECT COALESCE(SUM(e.actual), 0) AS total_expense_actual,
+                   COALESCE(SUM(e.planned), 0) AS total_expense_planned
+            FROM budget_entries e
+            JOIN budget_categories c ON e.category_id = c.id
+            WHERE c.kind = 'expense'
+              AND NOT EXISTS (SELECT 1 FROM budget_categories ch WHERE ch.parent_id = c.id)
+              AND ${entryWhere}
+        `, params),
+        // Latest cash balance
+        pool.query(`
+            SELECT balance FROM cash_balance
+            WHERE ${cashWhere}
+            ORDER BY month DESC, week DESC NULLS LAST
+            LIMIT 1
+        `, params),
+    ]);
 
     const revenue = revenueQuery.rows[0];
     const deduction = deductionQuery.rows[0];
@@ -359,6 +384,82 @@ router.get('/summary', asyncHandler(async (req: AuthRequest, res: Response) => {
         result_actual: adjustedRevenueActual - expenseActual,
         cash_balance: cashQuery.rows[0]?.balance ? parseFloat(cashQuery.rows[0].balance) : null,
     });
+}));
+
+// ==========================================
+// COPY WEEK / EXPORT
+// ==========================================
+
+// POST /api/budget/copy-week — copy planned values from one week to another
+router.post('/copy-week', asyncHandler(async (req: AuthRequest, res: Response) => {
+    const { source, target } = req.body || {};
+
+    const validRef = (r: any) =>
+        r && Number.isInteger(r.year) && Number.isInteger(r.month) && Number.isInteger(r.week)
+        && r.month >= 1 && r.month <= 12 && r.week >= 1 && r.week <= 5;
+
+    if (!validRef(source) || !validRef(target)) {
+        res.status(400).json({ error: 'source și target trebuie să conțină year, month (1-12), week (1-5).' });
+        return;
+    }
+
+    const result = await pool.query(`
+        INSERT INTO budget_entries (category_id, year, month, week, planned, actual, currency, updated_by)
+        SELECT category_id, $1, $2, $3, planned, 0, currency, $7
+        FROM budget_entries
+        WHERE year = $4 AND month = $5 AND week = $6
+        ON CONFLICT (category_id, year, month, week)
+        DO UPDATE SET planned = EXCLUDED.planned, updated_by = EXCLUDED.updated_by, updated_at = NOW()
+        RETURNING id
+    `, [target.year, target.month, target.week, source.year, source.month, source.week, req.user!.id]);
+
+    res.json({ copied: result.rowCount });
+}));
+
+// GET /api/budget/export?year=2026 — CSV export
+router.get('/export', asyncHandler(async (req: AuthRequest, res: Response) => {
+    const year = parseInt(req.query.year as string, 10);
+    if (!year || isNaN(year)) {
+        res.status(400).json({ error: 'year este obligatoriu.' });
+        return;
+    }
+
+    const { rows } = await pool.query(`
+        SELECT
+            c.section_label,
+            c.name AS category_name,
+            p.name AS parent_name,
+            c.kind,
+            e.year, e.month, e.week,
+            e.planned, e.actual, e.currency
+        FROM budget_entries e
+        JOIN budget_categories c ON e.category_id = c.id
+        LEFT JOIN budget_categories p ON c.parent_id = p.id
+        WHERE e.year = $1
+        ORDER BY c.order_index, e.month, e.week
+    `, [year]);
+
+    const escape = (val: any): string => {
+        if (val === null || val === undefined) return '';
+        const s = String(val);
+        if (/[",\n\r]/.test(s)) {
+            return `"${s.replace(/"/g, '""')}"`;
+        }
+        return s;
+    };
+
+    const header = 'section_label,category_name,parent_name,kind,year,month,week,planned,actual,currency';
+    const lines = rows.map(r => [
+        r.section_label, r.category_name, r.parent_name,
+        r.kind, r.year, r.month, r.week,
+        r.planned, r.actual, r.currency,
+    ].map(escape).join(','));
+
+    const csv = [header, ...lines].join('\n');
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="budget-${year}.csv"`);
+    res.send(csv);
 }));
 
 // ==========================================
