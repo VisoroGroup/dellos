@@ -60,13 +60,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     async function checkAuth() {
         try {
-            const token = safeLocalStorage.get('financiar_token');
-            if (token) {
-                const { user } = await authApi.me();
-                setUser(user);
-                const allUsers = await authApi.users();
-                setUsers(allUsers);
-            }
+            // Always try /api/auth/me — backend may have DEV_AUTH_BYPASS active
+            // (in that case it returns the first user without needing a token).
+            const { user } = await authApi.me();
+            setUser(user);
+            const allUsers = await authApi.users();
+            setUsers(allUsers);
         } catch {
             safeLocalStorage.remove('financiar_token');
         } finally {
