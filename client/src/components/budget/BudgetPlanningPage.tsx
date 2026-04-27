@@ -1,9 +1,10 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useBudgetCategories, useBudgetEntries, useBudgetSummary, useUpsertEntry, useAddCategory, useDeleteCategory, BudgetCategory, BudgetEntry } from '../../services/budget';
 import { useAuth } from '../../hooks/useAuth';
 import { Navigate } from 'react-router-dom';
 import { Plus, Trash2, ChevronDown, ChevronRight, TrendingUp, TrendingDown, Wallet, Target } from 'lucide-react';
 import { safeLocalStorage } from '../../utils/storage';
+import BudgetSidePanel from './BudgetSidePanel';
 
 const MONTHS = ['Ianuarie', 'Februarie', 'Martie', 'Aprilie', 'Mai', 'Iunie', 'Iulie', 'August', 'Septembrie', 'Octombrie', 'Noiembrie', 'Decembrie'];
 const WEEKS = [1, 2, 3, 4, 5];
@@ -228,6 +229,48 @@ export default function BudgetPlanningPage() {
         return total;
     };
 
+    // Cross-section calculated totals (replicate xlsx formulas)
+    // Revenue (Valoare facturată) — top-level, is_revenue=true
+    const getRevenueWeekTotal = (week: number | null, field: 'planned' | 'actual'): number => {
+        let total = 0;
+        for (const cat of categories) {
+            if (cat.parent_id) continue;
+            if (!cat.is_revenue) continue;
+            total += getCategoryWeekTotal(cat, week, field);
+        }
+        return total;
+    };
+
+    // Deductions (Parteneri + TVA + Rezervă firmă cu sub-categorii)
+    const getDeductionWeekTotal = (week: number | null, field: 'planned' | 'actual'): number => {
+        let total = 0;
+        for (const cat of categories) {
+            if (cat.parent_id) continue;
+            if (!cat.is_deduction) continue;
+            total += getCategoryWeekTotal(cat, week, field);
+        }
+        return total;
+    };
+
+    // Venit corectat = Valoare facturată − Deduceri
+    const getAdjustedRevenueWeekTotal = (week: number | null, field: 'planned' | 'actual'): number =>
+        getRevenueWeekTotal(week, field) - getDeductionWeekTotal(week, field);
+
+    // Cheltuieli totale (toate categoriile non-revenue, non-deducere, non-summary)
+    const getExpenseWeekTotal = (week: number | null, field: 'planned' | 'actual'): number => {
+        let total = 0;
+        for (const cat of categories) {
+            if (cat.parent_id) continue;
+            if (cat.is_revenue || cat.is_deduction || cat.is_summary_row) continue;
+            total += getCategoryWeekTotal(cat, week, field);
+        }
+        return total;
+    };
+
+    // Rezultatul săptămânii = Venit corectat − Cheltuieli totale
+    const getResultWeekTotal = (week: number | null, field: 'planned' | 'actual'): number =>
+        getAdjustedRevenueWeekTotal(week, field) - getExpenseWeekTotal(week, field);
+
     return (
         <div className={`min-h-screen p-4 md:p-6 ${darkMode ? 'bg-navy-950 text-white' : 'bg-gray-50 text-gray-900'} transition-colors`}>
             <div className="max-w-full mx-auto">
@@ -257,9 +300,30 @@ export default function BudgetPlanningPage() {
                 {/* Summary cards */}
                 {summary && (
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
-                        <SummaryCard icon={TrendingUp} label="Venituri (realizat)" value={summary.revenue_actual} planned={summary.revenue_planned} positive darkMode={darkMode} />
-                        <SummaryCard icon={TrendingDown} label="Cheltuieli (realizat)" value={summary.expense_actual} planned={summary.expense_planned} positive={false} darkMode={darkMode} />
-                        <SummaryCard icon={Target} label="Rezultat" value={summary.result_actual} planned={summary.result_planned} positive={summary.result_actual >= 0} darkMode={darkMode} />
+                        <SummaryCard
+                            icon={TrendingUp}
+                            label="Venit corectat (realizat)"
+                            value={summary.adjusted_revenue_actual}
+                            planned={summary.adjusted_revenue_planned}
+                            positive
+                            darkMode={darkMode}
+                        />
+                        <SummaryCard
+                            icon={TrendingDown}
+                            label="Cheltuieli totale (realizat)"
+                            value={summary.expense_actual}
+                            planned={summary.expense_planned}
+                            positive={false}
+                            darkMode={darkMode}
+                        />
+                        <SummaryCard
+                            icon={Target}
+                            label="Rezultat"
+                            value={summary.result_actual}
+                            planned={summary.result_planned}
+                            positive={summary.result_actual >= 0}
+                            darkMode={darkMode}
+                        />
                         <SummaryCard icon={Wallet} label="Casă" value={summary.cash_balance ?? 0} darkMode={darkMode} />
                     </div>
                 )}
@@ -371,7 +435,7 @@ export default function BudgetPlanningPage() {
                                             </td>
                                         </tr>
 
-                                        {/* Category rows */}
+                                        {/* Category rows — note: deduction rows render below with red styling */}
                                         {!isCollapsed && sectionCats.map(cat => (
                                             <React.Fragment key={cat.id}>
                                                 {/* Parent category row */}
@@ -379,8 +443,8 @@ export default function BudgetPlanningPage() {
                                                     <tr className={`group border-t ${darkMode ? 'border-navy-800 hover:bg-navy-800/30' : 'border-gray-100 hover:bg-gray-50'}`}>
                                                         <td className={`px-3 py-1.5 sticky left-0 z-10 ${darkMode ? 'bg-navy-900/95' : 'bg-white'}`}>
                                                             <div className="flex items-center gap-1.5">
-                                                                <span className={`${cat.children?.length ? 'font-semibold' : 'pl-4'} ${cat.is_revenue ? 'text-emerald-400' : ''}`}>
-                                                                    {cat.name}
+                                                                <span className={`${cat.children?.length ? 'font-semibold' : 'pl-4'} ${cat.is_revenue ? 'text-emerald-400' : cat.is_deduction ? 'text-red-300' : ''}`}>
+                                                                    {cat.is_deduction && !cat.children?.length ? '− ' : ''}{cat.name}
                                                                 </span>
                                                                 {cat.children && cat.children.length > 0 && (
                                                                     <button
@@ -437,7 +501,7 @@ export default function BudgetPlanningPage() {
                                                 )}
 
                                                 {/* Children rows */}
-                                                {cat.children?.map(child => (
+                                                {cat.children?.map((child: BudgetCategory) => (
                                                     <tr key={child.id} className={`group border-t ${darkMode ? 'border-navy-800/50 hover:bg-navy-800/20' : 'border-gray-50 hover:bg-gray-50/50'}`}>
                                                         <td className={`pl-8 pr-3 py-1 sticky left-0 z-10 ${darkMode ? 'bg-navy-900/95' : 'bg-white'}`}>
                                                             <div className="flex items-center gap-1">
@@ -471,12 +535,43 @@ export default function BudgetPlanningPage() {
                                                 ))}
                                             </React.Fragment>
                                         ))}
+
+                                        {/* Venit corectat — calculated row after "Venituri și deduceri" section */}
+                                        {sectionKey === 'venituri' && (
+                                            <CalculatedRow
+                                                label="Venit corectat"
+                                                sublabel="(ce poate fi cheltuit)"
+                                                getValue={getAdjustedRevenueWeekTotal}
+                                                tone="blue"
+                                                darkMode={darkMode}
+                                            />
+                                        )}
                                     </React.Fragment>
                                 );
                             })}
+
+                            {/* Cheltuieli totale — sum of all expense sections (1-6) */}
+                            <CalculatedRow
+                                label="Cheltuieli totale"
+                                getValue={getExpenseWeekTotal}
+                                tone="amber"
+                                darkMode={darkMode}
+                            />
+
+                            {/* Rezultatul săptămânii = Venit corectat − Cheltuieli totale */}
+                            <CalculatedRow
+                                label="Rezultatul săptămânii"
+                                sublabel="(Venit corectat − Cheltuieli)"
+                                getValue={getResultWeekTotal}
+                                tone="result"
+                                darkMode={darkMode}
+                            />
                         </tbody>
                     </table>
                 </div>
+
+                {/* Side panel: Casă, Creanțe, Datorii, Prestate nefacturate */}
+                <BudgetSidePanel year={year} month={month} darkMode={darkMode} />
             </div>
 
             {/* Add category modal */}
@@ -490,6 +585,81 @@ export default function BudgetPlanningPage() {
                 />
             )}
         </div>
+    );
+}
+
+// Read-only calculated row (Venit corectat / Cheltuieli totale / Rezultatul săptămânii)
+// Replicates xlsx formula rows — values cannot be edited, only displayed.
+function CalculatedRow({
+    label,
+    sublabel,
+    getValue,
+    tone,
+    darkMode,
+}: {
+    label: string;
+    sublabel?: string;
+    getValue: (week: number | null, field: 'planned' | 'actual') => number;
+    tone: 'blue' | 'amber' | 'result';
+    darkMode: boolean;
+}) {
+    const totalPlanned = WEEKS.reduce((s, w) => s + getValue(w, 'planned'), 0);
+    const totalActual = WEEKS.reduce((s, w) => s + getValue(w, 'actual'), 0);
+
+    // Color schemes
+    const bgClass =
+        tone === 'blue'   ? (darkMode ? 'bg-blue-900/30 hover:bg-blue-900/40'   : 'bg-blue-50 hover:bg-blue-100/70') :
+        tone === 'amber'  ? (darkMode ? 'bg-amber-900/20 hover:bg-amber-900/30' : 'bg-amber-50 hover:bg-amber-100/70') :
+                            (darkMode ? 'bg-navy-800/80 hover:bg-navy-800'      : 'bg-gray-100 hover:bg-gray-150');
+
+    const stickyBg =
+        tone === 'blue'   ? (darkMode ? 'bg-blue-900/40' : 'bg-blue-50')  :
+        tone === 'amber'  ? (darkMode ? 'bg-amber-900/30' : 'bg-amber-50') :
+                            (darkMode ? 'bg-navy-800' : 'bg-gray-100');
+
+    const labelColor =
+        tone === 'blue'  ? (darkMode ? 'text-blue-300'  : 'text-blue-700')  :
+        tone === 'amber' ? (darkMode ? 'text-amber-300' : 'text-amber-700') :
+                           (darkMode ? 'text-white'     : 'text-gray-900');
+
+    const valueColor = (val: number) => {
+        if (tone === 'result') {
+            return val > 0 ? 'text-emerald-400' : val < 0 ? 'text-red-400' : darkMode ? 'text-navy-400' : 'text-gray-400';
+        }
+        if (tone === 'blue') return 'text-blue-400';
+        if (tone === 'amber') return 'text-amber-400';
+        return darkMode ? 'text-white' : 'text-gray-900';
+    };
+
+    return (
+        <tr className={`border-t-2 ${darkMode ? 'border-navy-700' : 'border-gray-300'} ${bgClass}`}>
+            <td className={`px-3 py-2 sticky left-0 z-10 ${stickyBg}`}>
+                <div className={`flex flex-col ${labelColor}`}>
+                    <span className="font-bold text-sm">{label}</span>
+                    {sublabel && <span className={`text-[10px] font-normal ${darkMode ? 'opacity-70' : 'opacity-60'}`}>{sublabel}</span>}
+                </div>
+            </td>
+            {WEEKS.map(w => {
+                const planned = getValue(w, 'planned');
+                const actual = getValue(w, 'actual');
+                return (
+                    <React.Fragment key={w}>
+                        <td className={`px-1 py-2 text-right font-semibold border-l ${darkMode ? 'border-navy-700' : 'border-gray-200'} ${valueColor(planned)}`}>
+                            {planned ? formatMoney(planned) : '—'}
+                        </td>
+                        <td className={`px-1 py-2 text-right font-bold ${valueColor(actual)}`}>
+                            {actual ? formatMoney(actual) : '—'}
+                        </td>
+                    </React.Fragment>
+                );
+            })}
+            <td className={`px-1 py-2 text-right font-bold border-l-2 ${darkMode ? 'border-blue-500/50' : 'border-blue-300'} ${valueColor(totalPlanned)}`}>
+                {totalPlanned ? formatMoney(totalPlanned) : '—'}
+            </td>
+            <td className={`px-1 py-2 text-right font-bold ${valueColor(totalActual)}`}>
+                {totalActual ? formatMoney(totalActual) : '—'}
+            </td>
+        </tr>
     );
 }
 

@@ -16,7 +16,7 @@ router.use(requireRole('superadmin'));
 // GET /api/budget/categories — tree structure
 router.get('/categories', asyncHandler(async (_req: AuthRequest, res: Response) => {
     const { rows } = await pool.query(`
-        SELECT id, name, section, section_label, parent_id, order_index, is_summary_row, is_revenue
+        SELECT id, name, section, section_label, parent_id, order_index, is_summary_row, is_revenue, is_deduction
         FROM budget_categories
         ORDER BY order_index ASC, name ASC
     `);
@@ -130,7 +130,7 @@ router.get('/entries', asyncHandler(async (req: AuthRequest, res: Response) => {
     if (month) {
         // Specific month — return all weeks + month total
         query = `
-            SELECT e.*, c.name AS category_name, c.section, c.parent_id, c.is_summary_row, c.is_revenue
+            SELECT e.*, c.name AS category_name, c.section, c.parent_id, c.is_summary_row, c.is_revenue, c.is_deduction
             FROM budget_entries e
             JOIN budget_categories c ON e.category_id = c.id
             WHERE e.year = $1 AND e.month = $2
@@ -151,11 +151,12 @@ router.get('/entries', asyncHandler(async (req: AuthRequest, res: Response) => {
                 c.section,
                 c.parent_id,
                 c.is_summary_row,
-                c.is_revenue
+                c.is_revenue,
+                c.is_deduction
             FROM budget_entries e
             JOIN budget_categories c ON e.category_id = c.id
             WHERE e.year = $1
-            GROUP BY e.category_id, e.year, e.month, e.currency, c.name, c.section, c.parent_id, c.is_summary_row, c.is_revenue, c.order_index
+            GROUP BY e.category_id, e.year, e.month, e.currency, c.name, c.section, c.parent_id, c.is_summary_row, c.is_revenue, c.is_deduction, c.order_index
             ORDER BY c.order_index ASC, e.month ASC
         `;
         params = [year];
@@ -289,7 +290,7 @@ router.get('/summary', asyncHandler(async (req: AuthRequest, res: Response) => {
     const entryWhere = entryConditions.join(' AND ');
     const cashWhere = cashConditions.join(' AND ');
 
-    // Revenue total
+    // Revenue total (Valoare facturată)
     const revenueQuery = await pool.query(`
         SELECT COALESCE(SUM(e.actual), 0) AS total_revenue_actual,
                COALESCE(SUM(e.planned), 0) AS total_revenue_planned
@@ -298,13 +299,25 @@ router.get('/summary', asyncHandler(async (req: AuthRequest, res: Response) => {
         WHERE c.is_revenue = true AND ${entryWhere}
     `, params);
 
-    // Expense total (non-revenue, non-summary)
+    // Deductions total (Parteneri + TVA + Rezervă firmă cu sub-categorii)
+    const deductionQuery = await pool.query(`
+        SELECT COALESCE(SUM(e.actual), 0) AS total_deduction_actual,
+               COALESCE(SUM(e.planned), 0) AS total_deduction_planned
+        FROM budget_entries e
+        JOIN budget_categories c ON e.category_id = c.id
+        WHERE c.is_deduction = true AND c.is_summary_row = false AND ${entryWhere}
+    `, params);
+
+    // Expense total (cheltuieli reale: nu venit, nu deducere, nu summary, nu părinte cu copii)
     const expenseQuery = await pool.query(`
         SELECT COALESCE(SUM(e.actual), 0) AS total_expense_actual,
                COALESCE(SUM(e.planned), 0) AS total_expense_planned
         FROM budget_entries e
         JOIN budget_categories c ON e.category_id = c.id
-        WHERE c.is_revenue = false AND c.is_summary_row = false AND ${entryWhere}
+        WHERE c.is_revenue = false
+          AND c.is_deduction = false
+          AND c.is_summary_row = false
+          AND ${entryWhere}
     `, params);
 
     // Latest cash balance
@@ -316,19 +329,150 @@ router.get('/summary', asyncHandler(async (req: AuthRequest, res: Response) => {
     `, params);
 
     const revenue = revenueQuery.rows[0];
+    const deduction = deductionQuery.rows[0];
     const expense = expenseQuery.rows[0];
+
+    const revenuePlanned = parseFloat(revenue.total_revenue_planned);
+    const revenueActual = parseFloat(revenue.total_revenue_actual);
+    const deductionPlanned = parseFloat(deduction.total_deduction_planned);
+    const deductionActual = parseFloat(deduction.total_deduction_actual);
+    const expensePlanned = parseFloat(expense.total_expense_planned);
+    const expenseActual = parseFloat(expense.total_expense_actual);
+
+    // Venit corectat = Valoare facturată − deduceri (Parteneri + TVA + Rezervă firmă)
+    const adjustedRevenuePlanned = revenuePlanned - deductionPlanned;
+    const adjustedRevenueActual = revenueActual - deductionActual;
 
     res.json({
         year,
         month,
-        revenue_planned: parseFloat(revenue.total_revenue_planned),
-        revenue_actual: parseFloat(revenue.total_revenue_actual),
-        expense_planned: parseFloat(expense.total_expense_planned),
-        expense_actual: parseFloat(expense.total_expense_actual),
-        result_planned: parseFloat(revenue.total_revenue_planned) - parseFloat(expense.total_expense_planned),
-        result_actual: parseFloat(revenue.total_revenue_actual) - parseFloat(expense.total_expense_actual),
+        revenue_planned: revenuePlanned,
+        revenue_actual: revenueActual,
+        deduction_planned: deductionPlanned,
+        deduction_actual: deductionActual,
+        adjusted_revenue_planned: adjustedRevenuePlanned,
+        adjusted_revenue_actual: adjustedRevenueActual,
+        expense_planned: expensePlanned,
+        expense_actual: expenseActual,
+        // Rezultat = Venit corectat − Cheltuieli totale (matches "A HET EREDMENYE" in xlsx)
+        result_planned: adjustedRevenuePlanned - expensePlanned,
+        result_actual: adjustedRevenueActual - expenseActual,
         cash_balance: cashQuery.rows[0]?.balance ? parseFloat(cashQuery.rows[0].balance) : null,
     });
+}));
+
+// ==========================================
+// OUTSTANDING ITEMS (Creanțe / Datorii / Prestate nefacturate)
+// ==========================================
+
+const ALLOWED_OUTSTANDING_TYPES = ['creanta', 'datorie', 'prestat_nefacturat'];
+
+// GET /api/budget/outstanding?type=creanta&year=2026&month=4
+router.get('/outstanding', asyncHandler(async (req: AuthRequest, res: Response) => {
+    const type = req.query.type as string | undefined;
+    const year = req.query.year ? parseInt(req.query.year as string, 10) : null;
+    const month = req.query.month ? parseInt(req.query.month as string, 10) : null;
+    const includeResolved = req.query.include_resolved === 'true';
+
+    const conditions: string[] = [];
+    const params: any[] = [];
+
+    if (type) {
+        if (!ALLOWED_OUTSTANDING_TYPES.includes(type)) {
+            res.status(400).json({ error: 'Tip invalid.' });
+            return;
+        }
+        params.push(type);
+        conditions.push(`type = $${params.length}`);
+    }
+    if (year) {
+        params.push(year);
+        conditions.push(`year = $${params.length}`);
+    }
+    if (month) {
+        params.push(month);
+        conditions.push(`month = $${params.length}`);
+    }
+    if (!includeResolved) {
+        conditions.push('is_resolved = false');
+    }
+
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+    const { rows } = await pool.query(
+        `SELECT * FROM outstanding_items ${where} ORDER BY created_at DESC`,
+        params
+    );
+
+    res.json(rows);
+}));
+
+// POST /api/budget/outstanding
+router.post('/outstanding', asyncHandler(async (req: AuthRequest, res: Response) => {
+    const { type, description, amount, currency, counterparty, year, month, week } = req.body;
+
+    if (!type || !ALLOWED_OUTSTANDING_TYPES.includes(type)) {
+        res.status(400).json({ error: 'Tip invalid sau lipsă.' });
+        return;
+    }
+    if (!description || amount === undefined || !year || !month) {
+        res.status(400).json({ error: 'description, amount, year, month sunt obligatorii.' });
+        return;
+    }
+
+    const { rows } = await pool.query(
+        `INSERT INTO outstanding_items (type, description, amount, currency, counterparty, year, month, week, created_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
+        [type, description, amount, currency || 'RON', counterparty || null, year, month, week || null, req.user!.id]
+    );
+
+    res.status(201).json(rows[0]);
+}));
+
+// PUT /api/budget/outstanding/:id — update or mark resolved
+router.put('/outstanding/:id', asyncHandler(async (req: AuthRequest, res: Response) => {
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuidRegex.test(req.params.id)) {
+        res.status(400).json({ error: 'ID invalid.' });
+        return;
+    }
+
+    const { description, amount, counterparty, is_resolved } = req.body;
+
+    const { rows } = await pool.query(
+        `UPDATE outstanding_items SET
+            description = COALESCE($1, description),
+            amount = COALESCE($2, amount),
+            counterparty = COALESCE($3, counterparty),
+            is_resolved = COALESCE($4, is_resolved),
+            resolved_at = CASE WHEN $4 = true THEN NOW() ELSE NULL END,
+            updated_at = NOW()
+         WHERE id = $5 RETURNING *`,
+        [description ?? null, amount ?? null, counterparty ?? null, is_resolved ?? null, req.params.id]
+    );
+
+    if (rows.length === 0) {
+        res.status(404).json({ error: 'Element negăsit.' });
+        return;
+    }
+
+    res.json(rows[0]);
+}));
+
+// DELETE /api/budget/outstanding/:id
+router.delete('/outstanding/:id', asyncHandler(async (req: AuthRequest, res: Response) => {
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuidRegex.test(req.params.id)) {
+        res.status(400).json({ error: 'ID invalid.' });
+        return;
+    }
+
+    const { rows } = await pool.query('DELETE FROM outstanding_items WHERE id = $1 RETURNING *', [req.params.id]);
+    if (rows.length === 0) {
+        res.status(404).json({ error: 'Element negăsit.' });
+        return;
+    }
+
+    res.json({ message: 'Șters.', deleted: rows[0] });
 }));
 
 export default router;
