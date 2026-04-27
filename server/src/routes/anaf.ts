@@ -50,10 +50,18 @@ router.use((req, res, next) => {
 
 // --- Status / health ---
 router.get('/status', async (_req: Request, res: Response) => {
-    if (!isAnafConfigured()) {
+    const missing: string[] = [];
+    if (!anafConfig.clientId) missing.push('ANAF_CLIENT_ID');
+    if (!anafConfig.clientSecret) missing.push('ANAF_CLIENT_SECRET');
+    if (!anafConfig.cif) missing.push('ANAF_CIF');
+
+    if (missing.length > 0) {
         return res.json({
             configured: false,
-            message: 'ANAF nincs konfiguralva. Allitsd be: ANAF_CLIENT_ID, ANAF_CLIENT_SECRET, ANAF_CIF',
+            cif: anafConfig.cif || null,
+            missing,
+            message: `Lipsesc variabilele de mediu: ${missing.join(', ')}`,
+            stats: await dbStats(),
         });
     }
     let tokenStatus: 'missing' | 'valid' | 'expired' = 'missing';

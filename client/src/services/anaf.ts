@@ -60,10 +60,11 @@ export interface ParsedInvoice {
 
 export interface AnafStatus {
     configured: boolean;
-    cif?: string;
+    cif?: string | null;
     token?: 'missing' | 'valid' | 'expired';
     stats?: { total: number; byType: Array<{ tip: string | null; n: number }> };
     message?: string;
+    missing?: string[];
 }
 
 export interface MessageListResponse {

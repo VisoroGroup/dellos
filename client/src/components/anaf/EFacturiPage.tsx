@@ -90,9 +90,15 @@ export default function EFacturiPage() {
 
             {!status?.configured && (
                 <div className="mb-4 p-4 rounded-lg bg-navy-800/50 border border-navy-700/30">
-                    <p className="text-sm text-navy-300">
-                        ANAF nu este configurat. Setați variabilele <code>ANAF_CLIENT_ID</code>, <code>ANAF_CLIENT_SECRET</code>, <code>ANAF_CIF</code> în .env.
+                    <p className="text-sm text-navy-300 mb-2">
+                        ANAF nu este complet configurat.
+                        {status?.cif && <> CIF setat: <code className="text-blue-300">{status.cif}</code>.</>}
                     </p>
+                    {status?.missing && status.missing.length > 0 && (
+                        <p className="text-sm text-navy-400">
+                            Lipsesc: {status.missing.map(v => <code key={v} className="text-orange-300 mr-2">{v}</code>)}
+                        </p>
+                    )}
                 </div>
             )}
 
