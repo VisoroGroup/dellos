@@ -1,14 +1,13 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { User } from '../types';
-import { authApi } from '../services/api';
-import axios from 'axios';
+import api, { authApi } from '../services/api';
 import { safeLocalStorage } from '../utils/storage';
 
 interface AuthContextType {
     user: User | null;
     users: User[];
     loading: boolean;
-    login: () => Promise<void>;
+    login: (email: string, password: string) => Promise<void>;
     logout: () => void;
     refreshUser: () => Promise<void>;
 }
@@ -28,40 +27,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        // Handle OAuth callback — exchange one-time code for JWT token
-        const params = new URLSearchParams(window.location.search);
-        const oauthCode = params.get('code');
-        const oauthError = params.get('error');
-
-        if (oauthCode) {
-            // Clean URL immediately so code isn't visible in browser history
-            window.history.replaceState({}, '', '/');
-            // Exchange the one-time code for a JWT token
-            axios.post('/api/auth/exchange', { code: oauthCode })
-                .then(({ data }) => {
-                    safeLocalStorage.set('financiar_token', data.token);
-                    checkAuth();
-                })
-                .catch((err) => {
-                    console.error('Auth code exchange failed:', err);
-                    setLoading(false);
-                });
-        } else if (oauthError) {
-            console.error('OAuth error:', oauthError);
-            if (oauthError === 'user_deactivated') {
-                alert('Contul tău a fost dezactivat. Contactează administratorul.');
-            }
-            window.history.replaceState({}, '', '/');
-            setLoading(false);
-        } else {
-            checkAuth();
-        }
+        checkAuth();
     }, []);
 
     async function checkAuth() {
         try {
-            // Always try /api/auth/me — backend may have DEV_AUTH_BYPASS active
-            // (in that case it returns the first user without needing a token).
             const { user } = await authApi.me();
             setUser(user);
             const allUsers = await authApi.users();
@@ -73,8 +43,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
     }
 
-    async function login() {
-        window.location.href = '/api/auth/microsoft';
+    async function login(email: string, password: string) {
+        const { data } = await api.post('/auth/login', { email, password });
+        safeLocalStorage.set('financiar_token', data.token);
+        setUser(data.user);
+        try {
+            const allUsers = await authApi.users();
+            setUsers(allUsers);
+        } catch {
+            // ignore — user list is non-critical
+        }
     }
 
     function logout() {

@@ -1,6 +1,6 @@
 import { Router, Response, Request } from 'express';
-import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
+import bcrypt from 'bcryptjs';
 import { ConfidentialClientApplication } from '@azure/msal-node';
 import pool from '../config/database';
 import { AuthRequest, authMiddleware, generateToken } from '../middleware/auth';
@@ -250,106 +250,90 @@ router.post('/exchange', async (req: Request, res: Response): Promise<void> => {
     }
 });
 
-// POST /api/auth/login — validate Microsoft token or dev login
-router.post('/login', async (req: AuthRequest, res: Response): Promise<void> => {
+// POST /api/auth/login — email + password
+router.post('/login', async (req: Request, res: Response): Promise<void> => {
     try {
-        // Dev mode — login with microsoft_id or email (NEVER in production)
-        if (process.env.DEV_AUTH_BYPASS === 'true' && process.env.NODE_ENV !== 'production') {
-            const { microsoft_id, email } = req.body;
+        const { email, password } = req.body || {};
 
-            let user;
-            if (microsoft_id) {
-                const { rows } = await pool.query('SELECT * FROM users WHERE microsoft_id = $1', [microsoft_id]);
-                user = rows[0];
-            } else if (email) {
-                const { rows } = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
-                user = rows[0];
-            }
-
-            if (!user) {
-                // Create a new dev user
-                const id = uuidv4();
-                const devUser = {
-                    id,
-                    microsoft_id: microsoft_id || `dev-${id}`,
-                    email: email || 'dev@visoro.ro',
-                    display_name: req.body.display_name || 'Dev User',
-                    avatar_url: null,
-                    departments: req.body.departments || ['departament_1'],
-                    role: (['user', 'manager', 'admin'].includes(req.body.role) ? req.body.role : 'user')
-                };
-
-                const { rows } = await pool.query(
-                    `INSERT INTO users (id, microsoft_id, email, display_name, avatar_url, departments, role)
-           VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-                    [devUser.id, devUser.microsoft_id, devUser.email, devUser.display_name,
-                    devUser.avatar_url, devUser.departments, devUser.role]
-                );
-                user = rows[0];
-            }
-
-            const token = generateToken(user);
-            res.json({ token, user });
+        if (!email || typeof email !== 'string' || !password || typeof password !== 'string') {
+            res.status(400).json({ error: 'Email și parolă obligatorii.' });
             return;
         }
 
-        // Production mode — validate Microsoft token
-        const { accessToken } = req.body;
-        if (!accessToken) {
-            res.status(400).json({ error: 'Token Microsoft lipsă.' });
+        const normalizedEmail = email.trim().toLowerCase();
+
+        const { rows } = await pool.query(
+            `SELECT id, email, display_name, avatar_url, role, departments, is_active, password_hash
+             FROM users
+             WHERE LOWER(email) = $1`,
+            [normalizedEmail]
+        );
+
+        const user = rows[0];
+
+        // Constant-time-ish: still hash the password even if user doesn't exist
+        // to avoid email enumeration timing leaks.
+        const dummyHash = '$2a$10$CwTycUXWue0Thq9StjUM0uJ8wNqz0UvK0lIu3p8ZCFV.SzcLYNTo6';
+        const hashToCompare = user?.password_hash || dummyHash;
+        const passwordMatches = await bcrypt.compare(password, hashToCompare);
+
+        if (!user || !user.password_hash || !passwordMatches) {
+            res.status(401).json({ error: 'Email sau parolă incorectă.' });
             return;
         }
 
-        // Validate the Microsoft token and get user info
-        // In production, we'd call Microsoft Graph API to get user profile
-        try {
-            const graphResponse = await fetch('https://graph.microsoft.com/v1.0/me', {
-                headers: { Authorization: `Bearer ${accessToken}` }
-            });
-
-            if (!graphResponse.ok) {
-                res.status(401).json({ error: 'Token Microsoft invalid.' });
-                return;
-            }
-
-            const msUser = await graphResponse.json() as MsGraphUser;
-
-            // Upsert user
-            const { rows } = await pool.query(
-                `INSERT INTO users (microsoft_id, email, display_name, avatar_url)
-         VALUES ($1, $2, $3, $4)
-         ON CONFLICT (microsoft_id) DO UPDATE SET
-           email = EXCLUDED.email,
-           display_name = EXCLUDED.display_name,
-           updated_at = NOW()
-         RETURNING *`,
-                [msUser.id, msUser.mail || msUser.userPrincipalName, msUser.displayName, null]
-            );
-
-            const user = rows[0];
-
-            // Try to get avatar
-            try {
-                const photoResp = await fetch('https://graph.microsoft.com/v1.0/me/photo/$value', {
-                    headers: { Authorization: `Bearer ${accessToken}` }
-                });
-                if (photoResp.ok) {
-                    const buffer = await photoResp.arrayBuffer();
-                    const base64 = Buffer.from(buffer).toString('base64');
-                    const avatarUrl = `data:image/jpeg;base64,${base64}`;
-                    await pool.query('UPDATE users SET avatar_url = $1 WHERE id = $2', [avatarUrl, user.id]);
-                    user.avatar_url = avatarUrl;
-                }
-            } catch { /* avatar not available */ }
-
-            const token = generateToken(user);
-            res.json({ token, user });
-        } catch (err) {
-            res.status(500).json({ error: 'Eroare la validarea token-ului Microsoft.' });
+        if (!user.is_active) {
+            res.status(403).json({ error: 'Contul tău a fost dezactivat. Contactează administratorul.' });
+            return;
         }
+
+        // Don't return password_hash to client
+        delete user.password_hash;
+
+        const token = generateToken(user);
+        res.json({ token, user });
     } catch (err) {
         console.error('Login error:', err);
         res.status(500).json({ error: 'Eroare internă la autentificare.' });
+    }
+});
+
+// POST /api/auth/change-password — authenticated user changes their own password
+router.post('/change-password', authMiddleware, async (req: AuthRequest, res: Response): Promise<void> => {
+    try {
+        const { current_password, new_password } = req.body || {};
+
+        if (!current_password || !new_password || typeof new_password !== 'string') {
+            res.status(400).json({ error: 'Parola curentă și parola nouă sunt obligatorii.' });
+            return;
+        }
+
+        if (new_password.length < 8) {
+            res.status(400).json({ error: 'Parola nouă trebuie să aibă minim 8 caractere.' });
+            return;
+        }
+
+        const { rows } = await pool.query(
+            'SELECT password_hash FROM users WHERE id = $1',
+            [req.user!.id]
+        );
+
+        const currentHash = rows[0]?.password_hash;
+        if (!currentHash || !(await bcrypt.compare(current_password, currentHash))) {
+            res.status(401).json({ error: 'Parola curentă este incorectă.' });
+            return;
+        }
+
+        const newHash = await bcrypt.hash(new_password, 10);
+        await pool.query(
+            'UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2',
+            [newHash, req.user!.id]
+        );
+
+        res.json({ success: true });
+    } catch (err) {
+        console.error('Change password error:', err);
+        res.status(500).json({ error: 'Eroare internă la schimbarea parolei.' });
     }
 });
 

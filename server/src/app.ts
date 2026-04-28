@@ -16,6 +16,7 @@ import { globalLimiter, authLimiter } from './middleware/rateLimiter';
 import { globalErrorHandler } from './middleware/errorHandler';
 import { startPaymentEmailScheduler } from './cron/paymentScheduler';
 import { startAnafScheduler } from './cron/anafScheduler';
+import { bootstrapAdmin } from './services/bootstrapAdmin';
 import pool from './config/database';
 
 function validateEnv() {
@@ -112,6 +113,8 @@ const server = app.listen(PORT, async () => {
         console.error('❌ MIGRATION FAILED — REFUSING TO START:', err?.message || err);
         process.exit(1);
     }
+
+    await bootstrapAdmin();
 
     startPaymentEmailScheduler();
     void startAnafScheduler();

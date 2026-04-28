@@ -11,6 +11,7 @@ import BankImportPage from './components/budget/BankImportPage';
 import EFacturiPage from './components/anaf/EFacturiPage';
 import EFacturaDetailPage from './components/anaf/EFacturaDetailPage';
 import RapoartePage from './components/anaf/RapoartePage';
+import LoginPage from './components/auth/LoginPage';
 
 const queryClient = new QueryClient({
     defaultOptions: { queries: { staleTime: 30_000, retry: 1 } },
@@ -31,21 +32,7 @@ function AppRoutes() {
     }
 
     if (!user) {
-        const serverUrl = import.meta.env.VITE_SERVER_URL || '';
-        return (
-            <div className="flex items-center justify-center h-screen bg-navy-950">
-                <div className="text-center">
-                    <h1 className="text-3xl font-bold text-white mb-2">Financiar</h1>
-                    <p className="text-navy-400 mb-6">Visoro Global SRL</p>
-                    <a
-                        href={`${serverUrl}/api/auth/microsoft`}
-                        className="inline-flex items-center gap-2 px-6 py-3 bg-blue-500 hover:bg-blue-400 text-white rounded-lg font-medium transition-colors"
-                    >
-                        Autentificare cu Microsoft
-                    </a>
-                </div>
-            </div>
-        );
+        return <LoginPage />;
     }
 
     return (
