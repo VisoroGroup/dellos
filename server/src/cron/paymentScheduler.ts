@@ -179,7 +179,7 @@ export async function runDailyPaymentEmailJob() {
             let html = `
             <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; background: #f8f9fa; padding: 20px;">
               <div style="background: #0F172A; color: white; padding: 20px; border-radius: 8px 8px 0 0; text-align: center; border-bottom: 4px solid #3B82F6;">
-                <h1 style="margin: 0; font-size: 20px;">Visoro Financiar</h1>
+                <h1 style="margin: 0; font-size: 20px;">Dellos</h1>
                 <p style="margin: 5px 0 0; opacity: 0.8; font-size: 14px;">Plăți scadente — ${formatDateRo(today)}</p>
               </div>
               <div style="background: white; padding: 24px; border-radius: 0 0 8px 8px;">
@@ -244,7 +244,7 @@ export async function runDailyPaymentEmailJob() {
                     if (process.env.AZURE_CLIENT_ID) {
                         await sendEmail({
                             to: admin.email,
-                            subject: `[Visoro Financiar] Plăți scadente — ${formatDateRo(today)}`,
+                            subject: `[Dellos] Plăți scadente — ${formatDateRo(today)}`,
                             htmlBody: html,
                             displayName: admin.display_name
                         });

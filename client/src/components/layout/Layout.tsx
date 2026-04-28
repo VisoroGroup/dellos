@@ -45,7 +45,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         <>
             {/* Logo */}
             <div className="flex items-center gap-2 px-4 py-4 border-b border-navy-800/50">
-                {!collapsed && <span className="text-lg font-bold text-white truncate">Financiar</span>}
+                {!collapsed && <span className="text-lg font-bold text-white truncate">Dellos</span>}
                 <button
                     onClick={() => setCollapsed(!collapsed)}
                     className="ml-auto text-navy-400 hover:text-white transition-colors hidden md:inline-flex"
@@ -124,7 +124,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                 >
                     <Menu className="w-5 h-5" />
                 </button>
-                <span className="text-sm font-bold text-white">Financiar</span>
+                <span className="text-sm font-bold text-white">Dellos</span>
                 <span className="w-5" />
             </div>
 

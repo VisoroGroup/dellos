@@ -104,7 +104,7 @@ app.use(globalErrorHandler);
 
 // Start server
 const server = app.listen(PORT, async () => {
-    console.log(`🚀 Financiar API running on port ${PORT}`);
+    console.log(`🚀 Dellos API running on port ${PORT}`);
     console.log(`📌 Environment: ${process.env.NODE_ENV || 'development'}`);
 
     try {
