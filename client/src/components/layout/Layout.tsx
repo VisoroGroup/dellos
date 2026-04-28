@@ -45,7 +45,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         <>
             {/* Logo */}
             <div className="flex items-center gap-2 px-4 py-4 border-b border-navy-800/50">
-                {!collapsed && <span className="text-lg font-bold text-white truncate">Dellos</span>}
+                {!collapsed && <span className="text-2xl md:text-3xl font-bold font-outfit tracking-tight text-white truncate">Dellos</span>}
                 <button
                     onClick={() => setCollapsed(!collapsed)}
                     className="ml-auto text-navy-400 hover:text-white transition-colors hidden md:inline-flex"
